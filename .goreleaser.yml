@@ -1,0 +1,224 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+
+version: 2
+
+project_name: seedify
+
+metadata:
+  mod_timestamp: "{{ .CommitTimestamp }}"
+
+before:
+  hooks:
+    - go mod tidy
+    - rm -rf completions
+    - mkdir completions
+    - rm -rf manpages
+    - mkdir manpages
+    - sh -c 'go run ./cmd/seedify completion "bash" >./completions/seedify.bash'
+    - sh -c 'go run ./cmd/seedify completion "zsh" >./completions/seedify.zsh'
+    - sh -c 'go run ./cmd/seedify completion "fish" >./completions/seedify.fish'
+    - sh -c 'go run ./cmd/seedify man | gzip -c >./manpages/seedify.1.gz'
+
+gomod:
+  proxy: false
+
+builds:
+  - id: seedify
+    main: ./cmd/seedify
+    binary: seedify
+    goos:
+      - linux
+      - darwin
+      - windows
+      - freebsd
+      - openbsd
+      - netbsd
+    goarch:
+      - amd64
+      - arm64
+      - "386"
+      - arm
+    goarm:
+      - "6"
+      - "7"
+    ignore:
+      - goos: windows
+        goarch: arm64
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      seedify_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- with .Arm}}v{{ . }}{{ end }}
+    wrap_in_directory: true
+    files:
+      - README*
+      - LICENSE*
+      - manpages/*
+      - completions/*
+
+nfpms:
+  - vendor: ZenTenApp
+    file_name_template: >-
+      {{- trimsuffix .ConventionalFileName .ConventionalExtension -}}
+      {{- if and (eq .Arm "6") (eq .ConventionalExtension ".deb") }}6{{ end -}}
+      {{- .ConventionalExtension -}}
+    formats:
+      - apk
+      - deb
+      - rpm
+    contents:
+      - src: ./completions/seedify.bash
+        dst: /etc/bash_completion.d/seedify
+      - src: ./completions/seedify.fish
+        dst: /usr/share/fish/vendor_completions.d/seedify.fish
+      - src: ./completions/seedify.zsh
+        dst: /usr/share/zsh/site-functions/_seedify
+      - src: ./manpages/seedify.1.gz
+        dst: /usr/share/man/man1/seedify.1.gz
+    rpm:
+      signature:
+        key_file: '{{ if ne (index .Env "GPG_KEY_PATH") "" }}{{ .Env.GPG_KEY_PATH }}{{ else }}{{ end }}'
+    deb:
+      signature:
+        key_file: '{{ if ne (index .Env "GPG_KEY_PATH") "" }}{{ .Env.GPG_KEY_PATH }}{{ else }}{{ end }}'
+
+brews:
+  - repository:
+      owner: ZenTenApp
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/ZenTenApp/seedify"
+    description: "Convert SSH keys to BIP-39 seed phrases"
+    license: "MIT"
+    goarm: 7
+    install: |-
+      bin.install "seedify"
+      bash_completion.install "completions/seedify.bash" => "seedify"
+      zsh_completion.install "completions/seedify.zsh" => "_seedify"
+      fish_completion.install "completions/seedify.fish"
+      man1.install "manpages/seedify.1.gz"
+
+scoops:
+  - repository:
+      owner: ZenTenApp
+      name: scoop-bucket
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/ZenTenApp/seedify"
+    license: "MIT"
+
+nix:
+  - repository:
+      owner: ZenTenApp
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      name: nur
+    extra_install: |-
+      installManPage ./manpages/seedify.1.gz
+      installShellCompletion ./completions/*
+
+checksum:
+  name_template: 'seedify_{{ .Version }}_checksums.txt'
+
+source:
+  enabled: true
+
+sboms:
+  - artifacts: archive
+  - id: source
+    artifacts: source
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  use: github
+  format: "{{ .SHA }}: {{ .Message }} ({{ with .AuthorUsername }}@{{ . }}{{ else }}{{ .AuthorName }}{{ end }})"
+  filters:
+    exclude:
+      - "^test:"
+      - "^chore"
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+      - go mod tidy
+  groups:
+    - title: "Deps"
+      regexp: "^.*\\(deps\\)*:+.*$"
+      order: 300
+    - title: "New!"
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 100
+    - title: "Fixed"
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 200
+    - title: "Docs"
+      regexp: "^.*docs[(\\w)]*:+.*$"
+      order: 400
+    - title: "Other stuff"
+      order: 9999
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+dockers_v2:
+  - id: seedify
+    ids:
+      - seedify
+    dockerfile: Dockerfile
+    images:
+      - ghcr.io/ZenTenApp/seedify
+    tags:
+      - "{{ .Tag }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/arm/v7
+
+git:
+  tag_sort: "-version:refname"
+
+release:
+  github:
+    owner: ZenTenApp
+    name: seedify
+  mode: replace
+  header: |
+    ## seedify {{ .Tag }}
+    
+    {{ .ReleaseNotes }}
+  footer: |
+    ---
+    
+    **Full Changelog**: https://github.com/ZenTenApp/seedify/compare/{{ .PreviousTag }}...{{ .Tag }}

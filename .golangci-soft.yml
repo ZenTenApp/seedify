@@ -1,0 +1,35 @@
+version: "2"
+
+run:
+  tests: false
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  exclusions:
+    presets: []
+  enable:
+    - exhaustive
+    - goconst
+    - godot
+    - godox
+    - mnd
+    - gomoddirectives
+    - goprintffuncname
+    - misspell
+    - nakedret
+    - nestif
+    - noctx
+    - nolintlint
+    - prealloc
+    - wrapcheck
+
+  # disable default linters, they are already enabled in .golangci.yml
+  disable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
