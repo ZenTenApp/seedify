@@ -22,8 +22,8 @@ import (
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ZenTenApp/seedify"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/mattn/go-tty"
 	mcobra "github.com/muesli/mango-cobra"
@@ -799,7 +799,7 @@ func runDeriveOnionKey(keyPath string) error {
 	if writeErr := os.WriteFile(publicKeyPath, onionKeys.PublicKeyFile, 0o600); writeErr != nil { //nolint:mnd
 		return fmt.Errorf("could not write %s: %w", publicKeyPath, writeErr)
 	}
-	if writeErr := os.WriteFile(hostnamePath, onionKeys.HostnameFile, 0o644); writeErr != nil { //nolint:mnd
+	if writeErr := os.WriteFile(hostnamePath, onionKeys.HostnameFile, 0o644); writeErr != nil { //nolint:gosec,mnd // hostname file is the public .onion address, not a secret
 		return fmt.Errorf("could not write %s: %w", hostnamePath, writeErr)
 	}
 

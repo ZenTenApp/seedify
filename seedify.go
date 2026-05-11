@@ -3248,7 +3248,7 @@ const torOnionVersion = byte(0x03)
 
 // torSecretKeyHeader is the 32-byte magic prefix Tor expects at the start of
 // every hs_ed25519_secret_key file (29 ASCII chars + 3 NUL padding bytes).
-const torSecretKeyHeader = "== ed25519v1-secret: type0 ==\x00\x00\x00"
+const torSecretKeyHeader = "== ed25519v1-secret: type0 ==\x00\x00\x00" //#nosec G101 -- file-format magic prefix, not a credential
 
 // torPublicKeyHeader is the 32-byte magic prefix Tor expects at the start of
 // every hs_ed25519_public_key file (29 ASCII chars + 3 NUL padding bytes).
@@ -3307,22 +3307,22 @@ func DeriveOnionServiceKeys(key *ed25519.PrivateKey) (*OnionServiceKeys, error) 
 	// hs_ed25519_secret_key. This is the standard Ed25519 key expansion from
 	// RFC 8032: SHA-512 of the seed with three bits clamped.
 	expandedArr := sha512.Sum512(subSeed[:])
-	expandedArr[0] &= 248  //nolint:mnd // clear lowest 3 bits (cofactor)
-	expandedArr[31] &= 127 //nolint:mnd // clear highest bit
-	expandedArr[31] |= 64  //nolint:mnd // set second-highest bit
+	expandedArr[0] &= 248  // clear lowest 3 bits (cofactor)
+	expandedArr[31] &= 127 // clear highest bit
+	expandedArr[31] |= 64  // set second-highest bit
 
 	// Compute the v3 onion address checksum.
 	// Per the Tor spec (rend-spec-v3.txt §6):
 	//   checksum = SHA3-256(".onion checksum" || pubkey || version)[:2]
 	//   onion    = base32lower(pubkey || checksum || version) + ".onion"
-	checksumInput := make([]byte, 0, 15+ed25519.PublicKeySize+1) //nolint:mnd
+	checksumInput := make([]byte, 0, 15+ed25519.PublicKeySize+1)
 	checksumInput = append(checksumInput, []byte(".onion checksum")...)
 	checksumInput = append(checksumInput, pubKey...)
 	checksumInput = append(checksumInput, torOnionVersion)
 	checksumHash := sha3.Sum256(checksumInput)
 
 	// Assemble the 35-byte payload for base32 encoding (56 chars, no padding).
-	addrBytes := make([]byte, 0, ed25519.PublicKeySize+2+1) //nolint:mnd
+	addrBytes := make([]byte, 0, ed25519.PublicKeySize+2+1)
 	addrBytes = append(addrBytes, pubKey...)
 	addrBytes = append(addrBytes, checksumHash[:2]...)
 	addrBytes = append(addrBytes, torOnionVersion)
