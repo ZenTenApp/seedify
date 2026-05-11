@@ -197,7 +197,7 @@ dockers_v2:
       - seedify
     dockerfile: Dockerfile
     images:
-      - ghcr.io/ZenTenApp/seedify
+      - ghcr.io/zentenapp/seedify
     tags:
       - "{{ .Tag }}"
       - latest
