@@ -70,13 +70,13 @@ var (
 	polyseedYear    string
 
 	// derive-key flags.
-	deriveKeyToRSA        bool
-	deriveKeyToDKIM       bool
-	deriveKeyToOnion      bool
-	deriveKeyPKCS8        bool
-	deriveKeyToPGP        bool
-	deriveKeyPGPName      string
-	deriveKeyPGPEmail     string
+	deriveKeyToRSA           bool
+	deriveKeyToDKIM          bool
+	deriveKeyToOnion         bool
+	deriveKeyPKCS8           bool
+	deriveKeyToPGP           bool
+	deriveKeyPGPName         string
+	deriveKeyPGPEmail        string
 	deriveKeyOutput          string
 	deriveKeyBits            int
 	deriveKeyDKIMSelector    string
