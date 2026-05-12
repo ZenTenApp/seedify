@@ -77,10 +77,11 @@ var (
 	deriveKeyToPGP        bool
 	deriveKeyPGPName      string
 	deriveKeyPGPEmail     string
-	deriveKeyOutput       string
-	deriveKeyBits         int
-	deriveKeyDKIMSelector string
-	deriveKeyDKIMDomain   string
+	deriveKeyOutput          string
+	deriveKeyBits            int
+	deriveKeyDKIMSelector    string
+	deriveKeyDKIMDomain      string
+	deriveKeyReusePassphrase bool
 
 	rootCmd = &cobra.Command{
 		Use:   "seedify <key-path>",
@@ -114,6 +115,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025
   cat ~/.ssh/id_ed25519 | seedify --words 18
   seedify ~/.ssh/id_ed25519 --to-rsa --output ~/.ssh/id_rsa_derived
+  seedify ~/.ssh/id_ed25519 --to-rsa --reuse-passphrase --output ~/.ssh/id_rsa_derived
   seedify ~/.ssh/id_ed25519 --to-rsa --openssl-compatible --output ~/.ssh/id_rsa_derived.pem
   seedify ~/.ssh/id_ed25519 --to-dkim --output /etc/opendkim/keys/mail.private
   seedify ~/.ssh/id_ed25519 --to-dkim --dkim-selector mail --dkim-domain example.com --output /etc/opendkim/keys/mail.private`,
@@ -139,6 +141,12 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			// --openssl-compatible is only meaningful alongside --to-rsa.
 			if deriveKeyPKCS8 && !deriveKeyToRSA {
 				return errors.New("--openssl-compatible requires --to-rsa")
+			}
+
+			// --reuse-passphrase only applies to commands that prompt for a
+			// fresh output passphrase: --to-rsa and --to-pgp.
+			if deriveKeyReusePassphrase && !deriveKeyToRSA && !deriveKeyToPGP {
+				return errors.New("--reuse-passphrase requires --to-rsa or --to-pgp")
 			}
 
 			// --to-pgp is mutually exclusive with --to-rsa and --to-dkim.
@@ -483,6 +491,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&deriveKeyBits, "bits", 4096, "RSA key size in bits (2048, 3072, or 4096); used with --to-rsa, --to-dkim, or --to-pgp") //nolint:mnd
 	rootCmd.PersistentFlags().StringVar(&deriveKeyDKIMSelector, "dkim-selector", "mail", "DKIM selector name for the DNS TXT record (used with --to-dkim)")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyDKIMDomain, "dkim-domain", "", "Domain for the DKIM DNS TXT record label, e.g. example.com (used with --to-dkim)")
+	rootCmd.PersistentFlags().BoolVar(&deriveKeyReusePassphrase, "reuse-passphrase", false, "Reuse the source key's passphrase to protect the derived key (used with --to-rsa or --to-pgp); requires the source key to be password-protected")
 	rootCmd.AddCommand(manCmd)
 	rootCmd.AddCommand(braveSync25thCmd)
 	rootCmd.AddCommand(completionCmd)
@@ -532,13 +541,14 @@ func runDeriveKey(keyPath string) error {
 		return fmt.Errorf("could not read key: %w", err)
 	}
 
+	var sourcePass []byte
 	key, err := parsePrivateKey(bts, nil)
 	if err != nil && isPasswordError(err) {
-		pass, passErr := askKeyPassphrase(keyPath)
-		if passErr != nil {
-			return passErr
+		sourcePass, err = askKeyPassphrase(keyPath)
+		if err != nil {
+			return err
 		}
-		key, err = parsePrivateKey(bts, pass)
+		key, err = parsePrivateKey(bts, sourcePass)
 		if err != nil {
 			return fmt.Errorf("could not parse key with passphrase: %w", err)
 		}
@@ -558,26 +568,9 @@ func runDeriveKey(keyPath string) error {
 		return fmt.Errorf("could not derive RSA key: %w", deriveErr)
 	}
 
-	// Prompt for a passphrase to protect the output file.
-	fmt.Fprintf(os.Stderr, "Enter a passphrase for the derived key (cannot be empty): ")
-	outputPass, err := readPassword("")
-	fmt.Fprintln(os.Stderr)
+	outputPass, err := readOutputPassphrase("derived key", sourcePass)
 	if err != nil {
-		return fmt.Errorf("could not read passphrase: %w", err)
-	}
-	if len(outputPass) == 0 {
-		return errors.New("passphrase for derived key cannot be empty")
-	}
-
-	// Confirm the passphrase.
-	fmt.Fprintf(os.Stderr, "Confirm passphrase: ")
-	outputPassConfirm, err := readPassword("")
-	fmt.Fprintln(os.Stderr)
-	if err != nil {
-		return fmt.Errorf("could not read passphrase confirmation: %w", err)
-	}
-	if string(outputPass) != string(outputPassConfirm) {
-		return errors.New("passphrases do not match")
+		return err
 	}
 
 	var pemBytes []byte
@@ -845,13 +838,14 @@ func runDerivePGPKey(keyPath string) error {
 		return fmt.Errorf("could not read key: %w", err)
 	}
 
+	var sourcePass []byte
 	key, err := parsePrivateKey(bts, nil)
 	if err != nil && isPasswordError(err) {
-		pass, passErr := askKeyPassphrase(keyPath)
-		if passErr != nil {
-			return passErr
+		sourcePass, err = askKeyPassphrase(keyPath)
+		if err != nil {
+			return err
 		}
-		key, err = parsePrivateKey(bts, pass)
+		key, err = parsePrivateKey(bts, sourcePass)
 		if err != nil {
 			return fmt.Errorf("could not parse key with passphrase: %w", err)
 		}
@@ -871,25 +865,9 @@ func runDerivePGPKey(keyPath string) error {
 		return fmt.Errorf("could not derive PGP keypair: %w", deriveErr)
 	}
 
-	// Prompt for a passphrase to protect all private key material.
-	fmt.Fprintf(os.Stderr, "Enter a passphrase for the PGP key (cannot be empty): ")
-	outputPass, passErr := readPassword("")
-	fmt.Fprintln(os.Stderr)
-	if passErr != nil {
-		return fmt.Errorf("could not read passphrase: %w", passErr)
-	}
-	if len(outputPass) == 0 {
-		return errors.New("passphrase for PGP key cannot be empty")
-	}
-
-	fmt.Fprintf(os.Stderr, "Confirm passphrase: ")
-	outputPassConfirm, passConfirmErr := readPassword("")
-	fmt.Fprintln(os.Stderr)
-	if passConfirmErr != nil {
-		return fmt.Errorf("could not read passphrase confirmation: %w", passConfirmErr)
-	}
-	if string(outputPass) != string(outputPassConfirm) {
-		return errors.New("passphrases do not match")
+	outputPass, err := readOutputPassphrase("PGP key", sourcePass)
+	if err != nil {
+		return err
 	}
 
 	// Build the primary key packet from the derived RSA key.
@@ -1972,6 +1950,42 @@ func parseWordCounts(wordCountStr string) ([]int, error) {
 func askKeyPassphrase(path string) ([]byte, error) {
 	defer fmt.Fprintf(os.Stderr, "\n")
 	return readPassword(fmt.Sprintf("Enter the passphrase to unlock %q: ", path))
+}
+
+// readOutputPassphrase prompts the user for a passphrase to protect a derived
+// key, asking for confirmation. When --reuse-passphrase is set and a non-empty
+// sourcePass is available, it returns sourcePass directly without prompting.
+// label is interpolated into prompts and error messages, e.g. "derived key" or
+// "PGP key".
+func readOutputPassphrase(label string, sourcePass []byte) ([]byte, error) {
+	if deriveKeyReusePassphrase {
+		if len(sourcePass) == 0 {
+			return nil, errors.New("--reuse-passphrase requires the source key to be password-protected")
+		}
+		fmt.Fprintf(os.Stderr, "Reusing source key passphrase for the %s.\n", label)
+		return sourcePass, nil
+	}
+
+	fmt.Fprintf(os.Stderr, "Enter a passphrase for the %s (cannot be empty): ", label)
+	pass, err := readPassword("")
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return nil, fmt.Errorf("could not read passphrase: %w", err)
+	}
+	if len(pass) == 0 {
+		return nil, fmt.Errorf("passphrase for %s cannot be empty", label)
+	}
+
+	fmt.Fprintf(os.Stderr, "Confirm passphrase: ")
+	confirm, err := readPassword("")
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return nil, fmt.Errorf("could not read passphrase confirmation: %w", err)
+	}
+	if string(pass) != string(confirm) {
+		return nil, errors.New("passphrases do not match")
+	}
+	return pass, nil
 }
 
 // confirmPrintToConsole warns the user that no --output path was provided and
