@@ -12,7 +12,7 @@ require (
 	github.com/complex-gh/polyseed_go v1.1.0
 	github.com/matryer/is v1.4.1
 	github.com/mattn/go-isatty v0.0.20
-	github.com/mattn/go-tty v0.0.7
+	github.com/mattn/go-tty v0.0.8
 	github.com/mr-tron/base58 v1.2.0
 	github.com/muesli/mango-cobra v1.3.0
 	github.com/muesli/roff v0.1.0
