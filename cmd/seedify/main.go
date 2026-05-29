@@ -1192,6 +1192,31 @@ func printPEMPhrase(label string, phrase string) {
 	fmt.Printf("-----BEGIN %s-----\n%s\n-----END %s-----\n", label, phrase, label)
 }
 
+// printSSHKeyPair prints the SSH public key (RFC 4716 OpenSSH PEM) and the
+// private key (OpenSSH PEM), each with the base64 value on a single unwrapped line.
+// privateKeyPEM must be the raw PEM bytes as read from disk.
+func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte) error {
+	sshPubKey, err := ssh.NewPublicKey(ed25519Key.Public())
+	if err != nil {
+		return fmt.Errorf("failed to encode SSH public key: %w", err)
+	}
+
+	pubB64 := base64.StdEncoding.EncodeToString(sshPubKey.Marshal())
+	fmt.Printf("-----BEGIN OPENSSH PUBLIC KEY-----\n%s\n-----END OPENSSH PUBLIC KEY-----\n", pubB64)
+
+	// pem.Decode extracts the raw OpenSSH key bytes so we can re-encode them
+	// as a single unwrapped base64 line instead of the default 64-char wrapping.
+	block, _ := pem.Decode(privateKeyPEM)
+	if block == nil {
+		return errors.New("failed to decode private key PEM block")
+	}
+
+	privB64 := base64.StdEncoding.EncodeToString(block.Bytes)
+	fmt.Printf("\n-----BEGIN OPENSSH PRIVATE KEY-----\n%s\n-----END OPENSSH PRIVATE KEY-----\n", privB64)
+
+	return nil
+}
+
 // generatePhrasesOutput generates a curated set of seed phrases from the SSH key.
 // It prints the following phrases in order:
 //  1. 12-word BIP39 seed phrase
@@ -1237,6 +1262,11 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	ed25519Key, ok := key.(*ed25519.PrivateKey)
 	if !ok {
 		return unsupportedKeyTypeError(key)
+	}
+
+	fmt.Print("\n\n")
+	if err := printSSHKeyPair(ed25519Key, bts); err != nil {
+		return err
 	}
 
 	// 1. 12-word seed phrase
@@ -1338,6 +1368,11 @@ func generatePhrasesWithDerivations(keyPath string, seedPassphrase string, deriv
 	ed25519Key, ok := key.(*ed25519.PrivateKey)
 	if !ok {
 		return unsupportedKeyTypeError(key)
+	}
+
+	fmt.Print("\n\n")
+	if err := printSSHKeyPair(ed25519Key, bts); err != nil {
+		return err
 	}
 
 	// Generate non-polyseed mnemonics
@@ -1682,6 +1717,11 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 	ed25519Key, ok := key.(*ed25519.PrivateKey)
 	if !ok {
 		return unsupportedKeyTypeError(key)
+	}
+
+	fmt.Print("\n\n")
+	if err := printSSHKeyPair(ed25519Key, bts); err != nil {
+		return err
 	}
 
 	// Resolve polyseed years once before the loop
