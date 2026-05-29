@@ -118,7 +118,8 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --to-rsa --reuse-passphrase --output ~/.ssh/id_rsa_derived
   seedify ~/.ssh/id_ed25519 --to-rsa --openssl-compatible --output ~/.ssh/id_rsa_derived.pem
   seedify ~/.ssh/id_ed25519 --to-dkim --output /etc/opendkim/keys/mail.private
-  seedify ~/.ssh/id_ed25519 --to-dkim --dkim-selector mail --dkim-domain example.com --output /etc/opendkim/keys/mail.private`,
+  seedify ~/.ssh/id_ed25519 --to-dkim --dkim-selector mail --dkim-domain example.com --output /etc/opendkim/keys/mail.private
+  seedify deployment-ssh-key --to-dkim --dkim-domain mail1.npub.cx --dkim-selector mail2026`,
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -481,7 +482,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&zenprofileAppID, "zenprofile-app-id", "app.zenprofile.identifier", "When used with --zenprofile --publish: NIP-78 d tag value for the event identifier")
 	rootCmd.PersistentFlags().StringVar(&polyseedYear, "polyseed-year", "", "Override polyseed year (YYYY). Default: current year")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToRSA, "to-rsa", false, "Derive an RSA key from the input Ed25519 key and write it to --output")
-	rootCmd.PersistentFlags().BoolVar(&deriveKeyToDKIM, "to-dkim", false, "Derive a DKIM RSA keypair from the input Ed25519 key and write private key to --output")
+	rootCmd.PersistentFlags().BoolVar(&deriveKeyToDKIM, "to-dkim", false, "Derive a DKIM RSA keypair from the input Ed25519 key; when --dkim-domain is set, writes config/dkim/<domain>/<selector>.private and .public automatically")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToOnion, "to-onion", false, "Derive a Tor v3 hidden service identity from the input Ed25519 key; use --output <dir> to write the Tor key files")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyPKCS8, "openssl-compatible", false, "Write an encrypted PKCS#8 PEM file instead of OpenSSH format (used with --to-rsa; compatible with openssl pkey -check)")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToPGP, "to-pgp", false, "Derive an OpenPGP RSA keypair and write an ASCII-armored secret key (.asc) to --output")
@@ -627,15 +628,23 @@ func runDeriveKey(keyPath string) error {
 }
 
 // runDeriveDKIMKey handles --to-dkim: derives a DKIM RSA keypair from the source
-// Ed25519 key, writes the PKCS#8 private key to --output (or stdout after
-// confirmation), and prints the DNS TXT record value to stderr.
+// Ed25519 key, writes the PKCS#8 private key and the DNS TXT public key.
+//
+// Output path behaviour (in priority order):
+//  1. --output <path>  – write private key to <path> (legacy, single-file mode;
+//     public key / DNS record is printed to stderr as before).
+//  2. --dkim-domain set, --output empty  – auto-derive paths:
+//     config/dkim/<domain>/<selector>.private  (private key, 0600)
+//     config/dkim/<domain>/<selector>.public   (DNS TXT record value, 0644)
+//     The directory is created automatically.
+//  3. Neither flag set – fall back to the stdout confirmation prompt.
 //
 // Unlike --to-rsa, the private key is written without a passphrase. DKIM private
 // keys are conventionally stored unencrypted and protected only by filesystem
 // permissions; mail server daemons (OpenDKIM, rspamd, Postfix milter) read them
 // at startup without any interactive passphrase prompt.
 //
-//nolint:funlen
+//nolint:funlen,cyclop
 func runDeriveDKIMKey(keyPath string) error {
 	// Read and parse the source key.
 	f, err := openFileOrStdin(keyPath)
@@ -676,19 +685,35 @@ func runDeriveDKIMKey(keyPath string) error {
 	}
 
 	// Write or print the private key (no passphrase — DKIM convention).
-	if deriveKeyOutput == "" {
-		confirmed, confirmErr := confirmPrintToConsole()
-		if confirmErr != nil {
-			return fmt.Errorf("could not read confirmation: %w", confirmErr)
+	selector := deriveKeyDKIMSelector
+	domain := deriveKeyDKIMDomain
+
+	switch {
+	case deriveKeyOutput == "" && domain != "":
+		// Auto-derive mode: write both files under config/dkim/<domain>/
+		dkimDir := filepath.Join("config", "dkim", domain)
+		if mkdirErr := os.MkdirAll(dkimDir, 0o700); mkdirErr != nil { //nolint:mnd
+			return fmt.Errorf("could not create DKIM directory %s: %w", dkimDir, mkdirErr)
 		}
-		if !confirmed {
-			return errors.New("aborted: use --output <path> to write the DKIM private key to a file")
+
+		privPath := filepath.Join(dkimDir, selector+".private")
+		pubPath := filepath.Join(dkimDir, selector+".public")
+
+		if writeErr := os.WriteFile(privPath, dkimKeys.PrivateKeyPEM, 0o600); writeErr != nil { //nolint:mnd
+			return fmt.Errorf("could not write DKIM private key to %s: %w", privPath, writeErr)
+		}
+		pubContent := []byte(dkimKeys.DNSTXTRecord + "\n")
+		if writeErr := os.WriteFile(pubPath, pubContent, 0o644); writeErr != nil { //nolint:gosec,mnd // DNS TXT record is public
+			return fmt.Errorf("could not write DKIM public key to %s: %w", pubPath, writeErr)
 		}
 
 		fmt.Fprintf(os.Stderr, "\nWARNING: The derived DKIM key is cryptographically linked to its source key.\n")
 		fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
-		fmt.Print(string(dkimKeys.PrivateKeyPEM))
-	} else {
+		fmt.Fprintf(os.Stderr, "DKIM private key written to: %s\n", privPath)
+		fmt.Fprintf(os.Stderr, "DKIM public key written to:  %s\n", pubPath)
+
+	case deriveKeyOutput != "":
+		// Legacy explicit --output mode: write private key only.
 		if writeErr := os.WriteFile(deriveKeyOutput, dkimKeys.PrivateKeyPEM, 0o600); writeErr != nil { //nolint:mnd
 			return fmt.Errorf("could not write DKIM private key to %s: %w", deriveKeyOutput, writeErr)
 		}
@@ -696,28 +721,52 @@ func runDeriveDKIMKey(keyPath string) error {
 		fmt.Fprintf(os.Stderr, "\nWARNING: The derived DKIM key is cryptographically linked to its source key.\n")
 		fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
 		fmt.Fprintf(os.Stderr, "DKIM private key written to: %s\n", deriveKeyOutput)
+
+	default:
+		// No --output and no --dkim-domain: fall back to stdout with confirmation.
+		confirmed, confirmErr := confirmPrintToConsole()
+		if confirmErr != nil {
+			return fmt.Errorf("could not read confirmation: %w", confirmErr)
+		}
+		if !confirmed {
+			return errors.New("aborted: use --output <path> or --dkim-domain <domain> to write the DKIM private key to a file")
+		}
+
+		fmt.Fprintf(os.Stderr, "\nWARNING: The derived DKIM key is cryptographically linked to its source key.\n")
+		fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
+		fmt.Print(string(dkimKeys.PrivateKeyPEM))
 	}
 
 	// Print DNS TXT record instructions to stderr so only the private key
 	// appears on stdout when the user pipes the output.
-	selector := deriveKeyDKIMSelector
-	domain := deriveKeyDKIMDomain
+	// (Skipped in auto-derive mode since paths are already reported above.)
+	if deriveKeyOutput != "" || domain == "" {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "DNS TXT record for DKIM:")
 
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "DNS TXT record for DKIM:")
+		if domain != "" {
+			fmt.Fprintf(os.Stderr, "  Name:  %s._domainkey.%s\n", selector, domain)
+		} else {
+			fmt.Fprintf(os.Stderr, "  Name:  %s._domainkey.<your-domain>\n", selector)
+		}
 
-	if domain != "" {
-		fmt.Fprintf(os.Stderr, "  Name:  %s._domainkey.%s\n", selector, domain)
+		fmt.Fprintf(os.Stderr, "  Value: %s\n", dkimKeys.DNSTXTRecord)
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Note: some DNS providers require TXT record values to be split into")
+		fmt.Fprintln(os.Stderr, "      255-character chunks. Check your provider's documentation if")
+		fmt.Fprintln(os.Stderr, "      the record is rejected. For a 4096-bit key the value is ~736")
+		fmt.Fprintln(os.Stderr, "      characters; for 2048-bit it is ~392 characters.")
 	} else {
-		fmt.Fprintf(os.Stderr, "  Name:  %s._domainkey.<your-domain>\n", selector)
+		// Auto-derive mode: still show DNS record name and note for convenience.
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "DNS TXT record name: %s._domainkey.%s\n", selector, domain)
+		fmt.Fprintf(os.Stderr, "DNS TXT record value is in: %s\n", filepath.Join("config", "dkim", domain, selector+".public"))
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Note: some DNS providers require TXT record values to be split into")
+		fmt.Fprintln(os.Stderr, "      255-character chunks. Check your provider's documentation if")
+		fmt.Fprintln(os.Stderr, "      the record is rejected. For a 4096-bit key the value is ~736")
+		fmt.Fprintln(os.Stderr, "      characters; for 2048-bit it is ~392 characters.")
 	}
-
-	fmt.Fprintf(os.Stderr, "  Value: %s\n", dkimKeys.DNSTXTRecord)
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Note: some DNS providers require TXT record values to be split into")
-	fmt.Fprintln(os.Stderr, "      255-character chunks. Check your provider's documentation if")
-	fmt.Fprintln(os.Stderr, "      the record is rejected. For a 4096-bit key the value is ~736")
-	fmt.Fprintln(os.Stderr, "      characters; for 2048-bit it is ~392 characters.")
 
 	return nil
 }
