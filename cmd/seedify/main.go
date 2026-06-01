@@ -1399,60 +1399,68 @@ func generatePhrasesWithDerivations(keyPath string, seedPassphrase string, deriv
 		return unsupportedKeyTypeError(key)
 	}
 
-	fmt.Print("\n\n")
-	if err := printSSHKeyPair(ed25519Key, bts); err != nil {
-		return err
+	// Determine which phrase types are needed by the requested derivations.
+	// Only generate and print the phrases that feed into the requested outputs.
+	// Bitcoin derives from both 12-word and 24-word; Nostr also uses both.
+	// All other crypto chains (eth, zec, sol, tron) derive from 24-word only.
+	needs12Word := deriveNostr || deriveBtc
+	needs24Word := deriveBtc || deriveEth || deriveZec || deriveSol || deriveTron || deriveNostr
+
+	var mnemonic12 string
+	if needs12Word {
+		mnemonic12, err = seedify.ToMnemonicWithLength(ed25519Key, 12, seedPassphrase, false, 0) //nolint:mnd
+		if err != nil {
+			return fmt.Errorf("could not generate 12-word mnemonic: %w", err)
+		}
 	}
 
-	// Generate non-polyseed mnemonics
-	mnemonic12, err := seedify.ToMnemonicWithLength(ed25519Key, 12, seedPassphrase, false, 0) //nolint:mnd
-	if err != nil {
-		return fmt.Errorf("could not generate 12-word mnemonic: %w", err)
-	}
-	mnemonic24, err := seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
-	if err != nil {
-		return fmt.Errorf("could not generate 24-word mnemonic: %w", err)
-	}
-	braveMnemonic, err := seedify.ToMnemonicWithBraveSync(ed25519Key, seedPassphrase)
-	if err != nil {
-		return fmt.Errorf("could not generate brave 25-word mnemonic: %w", err)
+	var mnemonic24 string
+	if needs24Word {
+		mnemonic24, err = seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
+		if err != nil {
+			return fmt.Errorf("could not generate 24-word mnemonic: %w", err)
+		}
 	}
 
-	// Generate polyseed mnemonics — one per polyseed year
-	years, err := getPolyseedYears()
-	if err != nil {
-		return fmt.Errorf("invalid --polyseed-year: %w", err)
-	}
-	month, err := getPolyseedMonth()
-	if err != nil {
-		return fmt.Errorf("invalid --polyseed-month: %w", err)
-	}
-
+	// Polyseed is only required for Monero derivation.
 	type polyseedEntry struct {
 		year     int
 		month    time.Month
 		mnemonic string
 	}
-	polyseeds := make([]polyseedEntry, 0, len(years))
-	for _, year := range years {
-		m, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(year, month)) //nolint:mnd
-		if mnErr != nil {
-			return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", year, int(month), mnErr)
+	var polyseeds []polyseedEntry
+	if deriveXmr {
+		years, yearErr := getPolyseedYears()
+		if yearErr != nil {
+			return fmt.Errorf("invalid --polyseed-year: %w", yearErr)
 		}
-		polyseeds = append(polyseeds, polyseedEntry{year: year, month: month, mnemonic: m})
+		month, monthErr := getPolyseedMonth()
+		if monthErr != nil {
+			return fmt.Errorf("invalid --polyseed-month: %w", monthErr)
+		}
+		polyseeds = make([]polyseedEntry, 0, len(years))
+		for _, year := range years {
+			m, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(year, month)) //nolint:mnd
+			if mnErr != nil {
+				return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", year, int(month), mnErr)
+			}
+			polyseeds = append(polyseeds, polyseedEntry{year: year, month: month, mnemonic: m})
+		}
 	}
 
-	// Output curated phrases in PEM format
-	fmt.Print("\n\n")
-	printPEMPhrase("12-WORD SEED PHRASE", mnemonic12)
+	// Print only the phrase blocks relevant to the requested derivations.
+	if needs12Word {
+		fmt.Print("\n\n")
+		printPEMPhrase("12-WORD SEED PHRASE", mnemonic12)
+	}
 	for _, ps := range polyseeds {
 		fmt.Print("\n\n")
 		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(ps.month), ps.year), ps.mnemonic)
 	}
-	fmt.Print("\n\n")
-	printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
-	fmt.Print("\n\n")
-	printPEMPhrase("25-WORD BRAVE-SYNC", braveMnemonic)
+	if needs24Word {
+		fmt.Print("\n\n")
+		printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
+	}
 	fmt.Print("\n\n")
 
 	// Output requested derivations only
