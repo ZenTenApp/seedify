@@ -1217,8 +1217,9 @@ func printPEMPhrase(label string, phrase string) {
 	fmt.Printf("-----BEGIN %s-----\n%s\n-----END %s-----\n", label, phrase, label)
 }
 
-// printSSHKeyPair prints the SSH public key (RFC 4716 OpenSSH PEM) and the
-// private key (OpenSSH PEM), each with the base64 value on a single unwrapped line.
+// printSSHKeyPair prints the SSH public key (RFC 4716 OpenSSH PEM) with the
+// key type prepended inside the block (ssh-ed25519 <base64>), and then
+// the private key (OpenSSH PEM), each with the base64 value on a single unwrapped line.
 // privateKeyPEM must be the raw PEM bytes as read from disk.
 func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte) error {
 	sshPubKey, err := ssh.NewPublicKey(ed25519Key.Public())
@@ -1227,7 +1228,7 @@ func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte) error
 	}
 
 	pubB64 := base64.StdEncoding.EncodeToString(sshPubKey.Marshal())
-	fmt.Printf("-----BEGIN OPENSSH PUBLIC KEY-----\n%s\n-----END OPENSSH PUBLIC KEY-----\n", pubB64)
+	fmt.Printf("-----BEGIN OPENSSH PUBLIC KEY-----\nssh-ed25519 %s\n-----END OPENSSH PUBLIC KEY-----\n", pubB64)
 
 	// pem.Decode extracts the raw OpenSSH key bytes so we can re-encode them
 	// as a single unwrapped base64 line instead of the default 64-char wrapping.
