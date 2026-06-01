@@ -68,6 +68,7 @@ var (
 	publishRelays   string
 	zenprofileAppID string
 	polyseedYear    string
+	polyseedMonth   string
 
 	// derive-key flags.
 	deriveKeyToRSA           bool
@@ -94,7 +95,7 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24.
 
 By default, one 16-word Polyseed phrase is shown for the current year
 (using January 1 as the birthday). Use --polyseed-year to override
-with a specific year.
+the year and --polyseed-month (1-12) to override the month.
 
 SECURITY TIP: Add a space before the command to prevent it from being
 saved in your shell history. For example:
@@ -112,7 +113,9 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --brave
   seedify ~/.ssh/id_ed25519 --full
   seedify ~/.ssh/id_ed25519 --polyseed-year 2024
+  seedify ~/.ssh/id_ed25519 --polyseed-year 2024 --polyseed-month 6
   seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025
+  seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025 --polyseed-month 3
   cat ~/.ssh/id_ed25519 | seedify --words 18
   seedify ~/.ssh/id_ed25519 --to-rsa --output ~/.ssh/id_rsa_derived
   seedify ~/.ssh/id_ed25519 --to-rsa --reuse-passphrase --output ~/.ssh/id_rsa_derived
@@ -481,6 +484,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&publishRelays, "publish", "", "When used with --zenprofile: publish NIP-78 Kind 30078 event to these relays (comma-separated, e.g. relay.primal.net,relay.damus.io)")
 	rootCmd.PersistentFlags().StringVar(&zenprofileAppID, "zenprofile-app-id", "app.zenprofile.identifier", "When used with --zenprofile --publish: NIP-78 d tag value for the event identifier")
 	rootCmd.PersistentFlags().StringVar(&polyseedYear, "polyseed-year", "", "Override polyseed year (YYYY). Default: current year")
+	rootCmd.PersistentFlags().StringVar(&polyseedMonth, "polyseed-month", "", "Override polyseed month (1-12). Default: 1 (January)")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToRSA, "to-rsa", false, "Derive an RSA key from the input Ed25519 key and write it to --output")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToDKIM, "to-dkim", false, "Derive a DKIM RSA keypair from the input Ed25519 key; when --dkim-domain is set, writes config/dkim/<domain>/<selector>.private and .public automatically")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToOnion, "to-onion", false, "Derive a Tor v3 hidden service identity from the input Ed25519 key; use --output <dir> to write the Tor key files")
@@ -515,10 +519,31 @@ func getPolyseedYears() ([]int, error) {
 	return []int{year}, nil
 }
 
-// birthdayFromYear returns the Unix timestamp for January 1 00:00 UTC of the
-// given year, suitable for use as a polyseed birthday.
-func birthdayFromYear(year int) uint64 {
-	return uint64(time.Date(year, time.January, 1, 0, 0, 0, 0, time.UTC).Unix()) //nolint:gosec
+// getPolyseedMonth returns the calendar month to use for the polyseed birthday,
+// based on the --polyseed-month flag. Returns time.January when the flag is not
+// set, preserving the existing default behaviour. Returns an error if the value
+// is present but is not a valid integer in the range 1–12.
+func getPolyseedMonth() (time.Month, error) {
+	if polyseedMonth == "" {
+		return time.January, nil
+	}
+
+	m, err := strconv.Atoi(polyseedMonth)
+	if err != nil {
+		return time.January, fmt.Errorf("expected a month number 1–12 (e.g. 3 for March), got %q", polyseedMonth)
+	}
+
+	if m < 1 || m > 12 {
+		return time.January, fmt.Errorf("month must be between 1 and 12, got %d", m)
+	}
+
+	return time.Month(m), nil //nolint:gosec
+}
+
+// birthdayFromYearMonth returns the Unix timestamp for the 1st day at 00:00 UTC
+// of the given year and month, suitable for use as a polyseed birthday.
+func birthdayFromYearMonth(year int, month time.Month) uint64 {
+	return uint64(time.Date(year, month, 1, 0, 0, 0, 0, time.UTC).Unix()) //nolint:gosec
 }
 
 // runDeriveKey is the handler for --to-rsa.
@@ -1283,13 +1308,17 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	if err != nil {
 		return fmt.Errorf("invalid --polyseed-year: %w", err)
 	}
+	month, err := getPolyseedMonth()
+	if err != nil {
+		return fmt.Errorf("invalid --polyseed-month: %w", err)
+	}
 	for _, year := range years {
-		mnemonic16, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYear(year)) //nolint:mnd
+		mnemonic16, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(year, month)) //nolint:mnd
 		if mnErr != nil {
-			return fmt.Errorf("could not generate 16-word mnemonic for %d: %w", year, mnErr)
+			return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", year, int(month), mnErr)
 		}
 		fmt.Print("\n\n")
-		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.1.%d)", year), mnemonic16)
+		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(month), year), mnemonic16)
 	}
 
 	// 3. 24-word seed phrase (standard, no prefix)
@@ -1394,18 +1423,23 @@ func generatePhrasesWithDerivations(keyPath string, seedPassphrase string, deriv
 	if err != nil {
 		return fmt.Errorf("invalid --polyseed-year: %w", err)
 	}
+	month, err := getPolyseedMonth()
+	if err != nil {
+		return fmt.Errorf("invalid --polyseed-month: %w", err)
+	}
 
 	type polyseedEntry struct {
 		year     int
+		month    time.Month
 		mnemonic string
 	}
 	polyseeds := make([]polyseedEntry, 0, len(years))
 	for _, year := range years {
-		m, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYear(year)) //nolint:mnd
+		m, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(year, month)) //nolint:mnd
 		if mnErr != nil {
-			return fmt.Errorf("could not generate 16-word mnemonic for %d: %w", year, mnErr)
+			return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", year, int(month), mnErr)
 		}
-		polyseeds = append(polyseeds, polyseedEntry{year: year, mnemonic: m})
+		polyseeds = append(polyseeds, polyseedEntry{year: year, month: month, mnemonic: m})
 	}
 
 	// Output curated phrases in PEM format
@@ -1413,7 +1447,7 @@ func generatePhrasesWithDerivations(keyPath string, seedPassphrase string, deriv
 	printPEMPhrase("12-WORD SEED PHRASE", mnemonic12)
 	for _, ps := range polyseeds {
 		fmt.Print("\n\n")
-		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.1.%d)", ps.year), ps.mnemonic)
+		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(ps.month), ps.year), ps.mnemonic)
 	}
 	fmt.Print("\n\n")
 	printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
@@ -1432,9 +1466,9 @@ func generatePhrasesWithDerivations(keyPath string, seedPassphrase string, deriv
 		for _, ps := range polyseeds {
 			xmrKeys, xmrErr := seedify.DeriveMoneroKeys(ps.mnemonic, 9) //nolint:mnd
 			if xmrErr != nil {
-				return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d): %w", ps.year, xmrErr)
+				return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", ps.year, int(ps.month), xmrErr)
 			}
-			fmt.Printf("[monero addresses from 16 word polyseed (%d)]\n", ps.year)
+			fmt.Printf("[monero addresses from 16 word polyseed (%d-%02d)]\n", ps.year, int(ps.month))
 			fmt.Println()
 			fmt.Printf("%s (primary address)\n", xmrKeys.PrimaryAddress)
 			for i, subaddr := range xmrKeys.Subaddresses {
@@ -1724,10 +1758,14 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 		return err
 	}
 
-	// Resolve polyseed years once before the loop
+	// Resolve polyseed years and month once before the loop
 	years, err := getPolyseedYears()
 	if err != nil {
 		return fmt.Errorf("invalid --polyseed-year: %w", err)
+	}
+	month, err := getPolyseedMonth()
+	if err != nil {
+		return fmt.Errorf("invalid --polyseed-month: %w", err)
 	}
 
 	// Generate and display outputs for each word count
@@ -1735,12 +1773,12 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 		// For 16-word polyseed, generate one mnemonic per year
 		if count == 16 { //nolint:mnd,nestif
 			for _, year := range years {
-				mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYear(year)) //nolint:mnd
+				mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(year, month)) //nolint:mnd
 				if mnErr != nil {
-					return fmt.Errorf("could not generate 16-word mnemonic for %d: %w", year, mnErr)
+					return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", year, int(month), mnErr)
 				}
 
-				fmt.Printf("[16 word seed phrase (%d)]\n", year)
+				fmt.Printf("[16 word seed phrase (%d-%02d)]\n", year, int(month))
 				fmt.Println()
 				fmt.Println(mnemonic)
 				fmt.Println()
@@ -1748,10 +1786,10 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 				if deriveXmr {
 					xmrKeys, xmrErr := seedify.DeriveMoneroKeys(mnemonic, 9) //nolint:mnd
 					if xmrErr != nil {
-						return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d): %w", year, xmrErr)
+						return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", year, int(month), xmrErr)
 					}
 
-					fmt.Printf("[monero addresses from 16 word polyseed (%d)]\n", year)
+					fmt.Printf("[monero addresses from 16 word polyseed (%d-%02d)]\n", year, int(month))
 					fmt.Println()
 					fmt.Printf("%s (primary address)\n", xmrKeys.PrimaryAddress)
 					for j, subaddr := range xmrKeys.Subaddresses {
@@ -2479,7 +2517,15 @@ func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seed
 		return nil, nil, fmt.Errorf("failed to derive Dogecoin address: %w", err)
 	}
 
-	polyseedMnemonic, err := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYear(time.Now().Year())) //nolint:mnd
+	dnsMonth, monthErr := getPolyseedMonth()
+	if monthErr != nil {
+		return nil, nil, fmt.Errorf("invalid --polyseed-month: %w", monthErr)
+	}
+	dnsYear, yearErr := getPolyseedYears()
+	if yearErr != nil {
+		return nil, nil, fmt.Errorf("invalid --polyseed-year: %w", yearErr)
+	}
+	polyseedMnemonic, err := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(dnsYear[0], dnsMonth)) //nolint:mnd
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not generate 16-word polyseed: %w", err)
 	}
