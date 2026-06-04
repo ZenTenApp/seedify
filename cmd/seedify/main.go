@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -1218,8 +1219,9 @@ func printPEMPhrase(label string, phrase string) {
 }
 
 // printSSHKeyPair prints the SSH public key (RFC 4716 OpenSSH PEM) with the
-// key type prepended inside the block (ssh-ed25519 <base64>), and then
-// the private key (OpenSSH PEM), each with the base64 value on a single unwrapped line.
+// key type prepended inside the block (ssh-ed25519 <base64>), the private key
+// (OpenSSH PEM), the raw 32-byte ed25519 seed in hex, and the SHA-256 / MD5
+// fingerprints of the public key. Each base64 value is on a single unwrapped line.
 // privateKeyPEM must be the raw PEM bytes as read from disk.
 func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte) error {
 	sshPubKey, err := ssh.NewPublicKey(ed25519Key.Public())
@@ -1239,6 +1241,16 @@ func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte) error
 
 	privB64 := base64.StdEncoding.EncodeToString(block.Bytes)
 	fmt.Printf("\n-----BEGIN OPENSSH PRIVATE KEY-----\n%s\n-----END OPENSSH PRIVATE KEY-----\n", privB64)
+
+	// Raw 32-byte seed — the root secret from which the key pair is derived.
+	seedHex := hex.EncodeToString(ed25519Key.Seed())
+	fmt.Printf("\n-----BEGIN ED25519 SEED-----\n%s\n-----END ED25519 SEED-----\n", seedHex)
+
+	// Public key fingerprints (SHA-256 is the modern default; MD5 is shown for
+	// compatibility with older ssh-keygen / authorized_keys tooling).
+	sha256fp := strings.TrimPrefix(ssh.FingerprintSHA256(sshPubKey), "SHA256:")
+	md5fp := ssh.FingerprintLegacyMD5(sshPubKey)
+	fmt.Printf("\n-----BEGIN OPENSSH FINGERPRINT-----\n%s (SHA256)\n%s (MD5)\n-----END OPENSSH FINGERPRINT-----\n", sha256fp, md5fp)
 
 	return nil
 }
