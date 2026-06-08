@@ -630,6 +630,198 @@ func TestDeriveMoneroAddress_DifferentMnemonicsProduceDifferentAddresses(t *test
 	is.True(addr1 != addr2)
 }
 
+// TestToMoneroLegacySeed_WordCount verifies the legacy seed is exactly 25 words.
+func TestToMoneroLegacySeed_WordCount(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	words := strings.Fields(seed)
+	is.Equal(len(words), 25)
+}
+
+// TestToMoneroLegacySeed_WordsInWordlist verifies every word is in the official
+// 1,626-word Monero legacy wordlist.
+func TestToMoneroLegacySeed_WordsInWordlist(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	// Build lookup map from the package-level wordlist.
+	lookup := make(map[string]struct{}, len(moneroLegacyWordlist))
+	for _, w := range moneroLegacyWordlist {
+		lookup[w] = struct{}{}
+	}
+
+	for _, w := range strings.Fields(seed) {
+		_, ok := lookup[w]
+		is.True(ok) // every word must be in the official wordlist
+	}
+}
+
+// TestToMoneroLegacySeed_ChecksumWord verifies the 25th word equals the correct
+// checksum word (CRC32 of first-3-char prefixes of the 24 data words, mod 24).
+func TestToMoneroLegacySeed_ChecksumWord(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	words := strings.Fields(seed)
+	is.Equal(len(words), 25)
+
+	expectedChecksumWord := words[moneroLegacyChecksumIndex(words)]
+	is.Equal(words[24], expectedChecksumWord)
+}
+
+// TestToMoneroLegacySeed_Deterministic verifies the same SSH key always produces
+// the same 25-word legacy seed.
+func TestToMoneroLegacySeed_Deterministic(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed1, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	seed2, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	is.Equal(seed1, seed2)
+}
+
+// TestToMoneroLegacySeed_DifferentKeysProduceDifferentSeeds verifies that distinct
+// SSH keys produce distinct legacy seeds.
+func TestToMoneroLegacySeed_DifferentKeysProduceDifferentSeeds(t *testing.T) {
+	is := is.New(t)
+
+	_, key1, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+	_, key2, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed1, err := ToMoneroLegacySeed(&key1, "")
+	is.NoErr(err)
+	seed2, err := ToMoneroLegacySeed(&key2, "")
+	is.NoErr(err)
+
+	is.True(seed1 != seed2)
+}
+
+// TestToMoneroLegacySeed_PassphraseChangesOutput verifies that a seed passphrase
+// produces a different legacy seed from the same SSH key.
+func TestToMoneroLegacySeed_PassphraseChangesOutput(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seedNoPass, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+	seedWithPass, err := ToMoneroLegacySeed(&key, "hunter2")
+	is.NoErr(err)
+
+	is.True(seedNoPass != seedWithPass)
+}
+
+// TestDeriveMoneroKeysFromLegacySeed_ValidFormat verifies the primary address
+// starts with "4" and is 95 characters long.
+func TestDeriveMoneroKeysFromLegacySeed_ValidFormat(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	keys, err := DeriveMoneroKeysFromLegacySeed(seed, 0)
+	is.NoErr(err)
+
+	is.True(strings.HasPrefix(keys.PrimaryAddress, "4"))
+	is.Equal(len(keys.PrimaryAddress), 95)
+}
+
+// TestDeriveMoneroKeysFromLegacySeed_Subaddresses verifies subaddress count and
+// that each starts with "8".
+func TestDeriveMoneroKeysFromLegacySeed_Subaddresses(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	const numSub = 9
+	keys, err := DeriveMoneroKeysFromLegacySeed(seed, numSub)
+	is.NoErr(err)
+
+	is.Equal(len(keys.Subaddresses), numSub)
+	for _, sub := range keys.Subaddresses {
+		is.True(strings.HasPrefix(sub, "8"))
+		is.Equal(len(sub), 95)
+	}
+}
+
+// TestMoneroLegacyRoundtrip verifies that ToMoneroLegacySeed →
+// DeriveMoneroKeysFromLegacySeed produces a valid, deterministic wallet.
+func TestMoneroLegacyRoundtrip(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	keys1, err := DeriveMoneroKeysFromLegacySeed(seed, 3) //nolint:mnd
+	is.NoErr(err)
+	keys2, err := DeriveMoneroKeysFromLegacySeed(seed, 3) //nolint:mnd
+	is.NoErr(err)
+
+	// Same seed → same addresses every time.
+	is.Equal(keys1.PrimaryAddress, keys2.PrimaryAddress)
+	for i := range keys1.Subaddresses {
+		is.Equal(keys1.Subaddresses[i], keys2.Subaddresses[i])
+	}
+}
+
+// TestMoneroLegacySeedKnownVector tests against a known-good vector derived from
+// the go-monero library's own test vector (seed → keys):
+//
+//	spend private key: 0cca07dc4e90fc738fffdb2561dddd7a94d0dc8977d0229303d7509a10c9d705
+//	mnemonic:          wiggle drowning auburn aquarium attire meant impel phase
+//	                   soothe heron android mechanic inroads energy smog niece
+//	                   enforce syllabus exquisite lush bluntly rage siblings soda syllabus
+//
+// We verify that DeriveMoneroKeysFromLegacySeed decodes this vector without error
+// and produces a mainnet primary address.
+func TestMoneroLegacySeedKnownVector(t *testing.T) {
+	is := is.New(t)
+
+	const knownMnemonic = "wiggle drowning auburn aquarium attire meant impel phase " +
+		"soothe heron android mechanic inroads energy smog niece " +
+		"enforce syllabus exquisite lush bluntly rage siblings soda syllabus"
+
+	keys, err := DeriveMoneroKeysFromLegacySeed(knownMnemonic, 0)
+	is.NoErr(err)
+	is.True(strings.HasPrefix(keys.PrimaryAddress, "4"))
+	is.Equal(len(keys.PrimaryAddress), 95)
+}
+
 // TestDeriveBitcoinLegacyKeys_ValidFormat tests that DeriveBitcoinLegacyKeys produces valid address and WIF
 func TestDeriveBitcoinLegacyKeys_ValidFormat(t *testing.T) {
 	is := is.New(t)

@@ -22,6 +22,7 @@ import (
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/binary"
+	"hash/crc32"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
@@ -1644,6 +1645,111 @@ func DeriveMoneroKeys(mnemonic string, numSubaddresses int) (*MoneroKeys, error)
 	// Generate subaddresses
 	subaddresses := make([]string, 0, numSubaddresses)
 	for i := uint32(1); i <= uint32(numSubaddresses); i++ { //nolint:gosec // numSubaddresses is always small (single digits)
+		subaddr, err := deriveMoneroSubaddress(viewSecKey, spendPubKey, 0, i)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive subaddress (0,%d): %w", i, err)
+		}
+		subaddresses = append(subaddresses, subaddr)
+	}
+
+	return &MoneroKeys{
+		PrimaryAddress: primaryAddr,
+		Subaddresses:   subaddresses,
+	}, nil
+}
+
+// moneroLegacyChecksumIndex computes the CRC32-based checksum word index for a
+// 25-word Monero legacy mnemonic. It concatenates the first 3 characters of
+// each of the 24 data words, computes CRC32 (IEEE), and takes the result mod 24.
+func moneroLegacyChecksumIndex(words []string) int { //nolint:mnd
+	const prefixLen = 3
+	buf := make([]byte, 0, 24*prefixLen) //nolint:mnd
+	for _, w := range words[:24] {       //nolint:mnd
+		if len(w) >= prefixLen {
+			buf = append(buf, w[:prefixLen]...)
+		} else {
+			buf = append(buf, w...)
+		}
+	}
+	return int(crc32.ChecksumIEEE(buf) % 24) //nolint:mnd
+}
+
+// moneroLegacyBytesToWords encodes 32 raw key bytes into a 25-word Monero
+// legacy (Electrum-style) mnemonic. The encoding splits the 32 bytes into
+// eight 4-byte little-endian groups; each group is mapped to three words
+// using base-1626 modular arithmetic:
+//
+//	w1 = v % 1626
+//	w2 = (v/1626 + w1) % 1626
+//	w3 = (v/1626/1626 + w2) % 1626
+//
+// The 25th word is the checksum word at index CRC32(prefixes) % 24.
+func moneroLegacyBytesToWords(keyBytes []byte) ([]string, error) {
+	if len(keyBytes) != 32 { //nolint:mnd
+		return nil, fmt.Errorf("monero legacy seed: expected 32 bytes, got %d", len(keyBytes))
+	}
+	const (
+		n        = 1626 // wordlist length
+		nGroups  = 8   // 32 bytes / 4 bytes per group
+	)
+	words := make([]string, 0, 25) //nolint:mnd
+	for i := range nGroups {
+		v := binary.LittleEndian.Uint32(keyBytes[4*i : 4*i+4]) //nolint:mnd
+		w1 := v % n
+		w2 := (v/n + w1) % n
+		w3 := (v/n/n + w2) % n
+		words = append(words, moneroLegacyWordlist[w1], moneroLegacyWordlist[w2], moneroLegacyWordlist[w3])
+	}
+	// Append the CRC32 checksum word.
+	words = append(words, words[moneroLegacyChecksumIndex(words)])
+	return words, nil
+}
+
+// ToMoneroLegacySeed derives the Monero legacy 25-word (Electrum-style) seed
+// from an Ed25519 SSH private key. The derivation uses the same spend key as
+// the Polyseed path for the same SSH key — both seeds represent the same wallet:
+//
+//  1. Extract the 32-byte Ed25519 seed from the SSH key.
+//  2. Optionally mix in a seed passphrase (same combineSeedPassphrase as other
+//     mnemonic functions, applied before reduction so it feeds directly into
+//     the spend key scalar).
+//  3. Apply scReduce32 to obtain a canonical Monero spend key scalar.
+//  4. Encode the reduced bytes into 24 + 1 (checksum) words.
+func ToMoneroLegacySeed(key *ed25519.PrivateKey, seedPassphrase string) (string, error) {
+	seedBytes := combineSeedPassphrase(key.Seed(), seedPassphrase)
+	reduced := scReduce32(seedBytes)
+	words, err := moneroLegacyBytesToWords(reduced)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode Monero legacy seed: %w", err)
+	}
+	return strings.Join(words, " "), nil
+}
+
+// DeriveMoneroKeysFromLegacySeed derives the Monero primary address and
+// subaddresses from a 25-word Monero legacy (Electrum-style) mnemonic.
+// It delegates key decoding to the go-monero library (utils.NewSeedMnemonic),
+// then builds addresses using the shared helpers.
+//
+// Parameters:
+//   - mnemonic: A valid 25-word Monero legacy mnemonic (space-separated)
+//   - numSubaddresses: Number of subaddresses to generate (0 for none)
+func DeriveMoneroKeysFromLegacySeed(mnemonic string, numSubaddresses int) (*MoneroKeys, error) {
+	seed, err := utils.NewSeedMnemonic(mnemonic, utils.English)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode Monero legacy mnemonic: %w", err)
+	}
+	keyPair := seed.FullKeyPair()
+	viewSecKey := keyPair.ViewKeyPair().PrivateKey().Bytes()
+	spendPubKey := keyPair.SpendKeyPair().PublicKey().Bytes()
+	viewPubKey := keyPair.ViewKeyPair().PublicKey().Bytes()
+
+	primaryAddr, err := buildMoneroAddress(0x12, spendPubKey, viewPubKey) //nolint:mnd
+	if err != nil {
+		return nil, fmt.Errorf("failed to build primary address: %w", err)
+	}
+
+	subaddresses := make([]string, 0, numSubaddresses)
+	for i := uint32(1); i <= uint32(numSubaddresses); i++ { //nolint:gosec
 		subaddr, err := deriveMoneroSubaddress(viewSecKey, spendPubKey, 0, i)
 		if err != nil {
 			return nil, fmt.Errorf("failed to derive subaddress (0,%d): %w", i, err)

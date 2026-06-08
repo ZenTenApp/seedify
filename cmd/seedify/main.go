@@ -65,6 +65,7 @@ var (
 	solana          bool
 	tron            bool
 	monero          bool
+	moneroLegacy    bool
 	zenprofile      bool
 	publishRelays   string
 	zenprofileAppID string
@@ -247,7 +248,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			// also show the relevant portions of the full output for those chains.
 			// When --words is specified, output only the requested word counts (no derivations).
 			if !full {
-				hasDerivationFlags := bitcoin || ethereum || zcash || nostr || solana || tron || monero
+				hasDerivationFlags := bitcoin || ethereum || zcash || nostr || solana || tron || monero || moneroLegacy
 				hasWordsFlag := wordCountStr != ""
 
 				if hasWordsFlag {
@@ -257,7 +258,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 						return fmt.Errorf("invalid word counts: %w", err)
 					}
 					err = generateUnifiedOutput(keyPath, parsedCounts, seedPassphrase,
-						false, false, false, false, false, false, false, false)
+						false, false, false, false, false, false, false, false, false)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
 							return formatPasswordError(err)
@@ -265,8 +266,22 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 						return err
 					}
 				} else if hasDerivationFlags {
-					err := generatePhrasesWithDerivations(keyPath, seedPassphrase,
-						nostr, bitcoin, ethereum, zcash, solana, tron, monero)
+					// Route through generateUnifiedOutput so --xmr-legacy is handled uniformly.
+					var wc []int
+					if bitcoin {
+						wc = append(wc, 12) //nolint:mnd
+					}
+					if monero || moneroLegacy {
+						wc = append(wc, 16) //nolint:mnd
+					}
+					if bitcoin || ethereum || zcash || solana || tron || nostr {
+						wc = append(wc, 24) //nolint:mnd
+					}
+					if len(wc) == 0 {
+						wc = []int{16} //nolint:mnd
+					}
+					err := generateUnifiedOutput(keyPath, wc, seedPassphrase,
+						nostr, false, bitcoin, ethereum, zcash, solana, tron, monero, moneroLegacy)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
 							return formatPasswordError(err)
@@ -288,13 +303,13 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			// --full: generate unified output (seed phrases + wallet derivations)
 			hasWordsFlag := wordCountStr != ""
 			hasNostrFlag := nostr
-			hasCryptoFlags := bitcoin || ethereum || zcash || solana || tron || monero || zenprofile
+			hasCryptoFlags := bitcoin || ethereum || zcash || solana || tron || monero || moneroLegacy || zenprofile
 			hasAnyDerivationFlags := hasWordsFlag || hasNostrFlag || hasCryptoFlags
 
 			var wordCounts []int
 			var deriveNostr bool
 			var showBrave bool
-			var deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr bool
+			var deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy bool
 
 			if !hasAnyDerivationFlags {
 				wordCounts = []int{12, 15, 16, 18, 21, 24}
@@ -306,6 +321,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				deriveSol = true
 				deriveTron = true
 				deriveXmr = true
+				deriveXmrLegacy = true
 			} else {
 				if hasWordsFlag {
 					parsedCounts, err := parseWordCounts(wordCountStr)
@@ -318,7 +334,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 					if bitcoin {
 						wordCounts = append(wordCounts, 12) //nolint:mnd
 					}
-					if monero {
+					if monero || moneroLegacy {
 						wordCounts = append(wordCounts, 16) //nolint:mnd
 					}
 					if bitcoin || ethereum || zcash || solana || tron {
@@ -333,9 +349,10 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				deriveSol = solana
 				deriveTron = tron
 				deriveXmr = monero
+				deriveXmrLegacy = moneroLegacy
 			}
 
-			uErr := generateUnifiedOutput(keyPath, wordCounts, seedPassphrase, deriveNostr, showBrave, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr)
+			uErr := generateUnifiedOutput(keyPath, wordCounts, seedPassphrase, deriveNostr, showBrave, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy)
 			if uErr != nil && strings.Contains(uErr.Error(), "key is not password-protected") {
 				return formatPasswordError(uErr)
 			}
@@ -481,6 +498,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&solana, "sol", false, "Derive Solana address from 24-word seed phrase")
 	rootCmd.PersistentFlags().BoolVar(&tron, "tron", false, "Derive Tron address from 24-word seed phrase")
 	rootCmd.PersistentFlags().BoolVar(&monero, "xmr", false, "Derive Monero address from 16-word polyseed")
+	rootCmd.PersistentFlags().BoolVar(&moneroLegacy, "xmr-legacy", false, "Derive Monero address from 25-word legacy seed (shown alongside --xmr polyseed output)")
 	rootCmd.PersistentFlags().BoolVar(&zenprofile, "zenprofile", false, "Output public keys and addresses as DNS JSON to stdout")
 	rootCmd.PersistentFlags().StringVar(&publishRelays, "publish", "", "When used with --zenprofile: publish NIP-78 Kind 30078 event to these relays (comma-separated, e.g. relay.primal.net,relay.damus.io)")
 	rootCmd.PersistentFlags().StringVar(&zenprofileAppID, "zenprofile-app-id", "app.zenprofile.identifier", "When used with --zenprofile --publish: NIP-78 d tag value for the event identifier")
@@ -1733,7 +1751,7 @@ func readPassword(msg string) ([]byte, error) {
 // When deriveNostr is true, it derives Nostr keys directly from the SSH key (not from seed phrases).
 // When showBrave is true, it also displays the brave 24-word seed phrase at the end.
 // Crypto address flags (deriveBtc, deriveEth, deriveSol, deriveTron, deriveXmr) control which addresses to derive.
-func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase string, deriveNostr bool, showBrave bool, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr bool) error {
+func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase string, deriveNostr bool, showBrave bool, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy bool) error {
 	// Parse the key once
 	f, err := openFileOrStdin(keyPath)
 	if err != nil {
@@ -1791,7 +1809,9 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 
 	// Generate and display outputs for each word count
 	for i, count := range wordCounts {
-		// For 16-word polyseed, generate one mnemonic per year
+		// For 16-word polyseed, generate one mnemonic per year.
+		// The 25-word legacy seed is year-independent (derived directly from the
+		// SSH key), so it is printed once after all polyseed year blocks.
 		if count == 16 { //nolint:mnd,nestif
 			for _, year := range years {
 				mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(year, month)) //nolint:mnd
@@ -1818,6 +1838,32 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					}
 					fmt.Println()
 				}
+			}
+
+			// 25-word legacy seed — year-independent, printed once after all polyseed blocks.
+			if deriveXmrLegacy {
+				legacySeed, legacyErr := seedify.ToMoneroLegacySeed(ed25519Key, seedPassphrase)
+				if legacyErr != nil {
+					return fmt.Errorf("failed to derive Monero legacy seed: %w", legacyErr)
+				}
+
+				fmt.Println("[25 word monero legacy seed]")
+				fmt.Println()
+				fmt.Println(legacySeed)
+				fmt.Println()
+
+				legacyKeys, legacyKErr := seedify.DeriveMoneroKeysFromLegacySeed(legacySeed, 9) //nolint:mnd
+				if legacyKErr != nil {
+					return fmt.Errorf("failed to derive Monero keys from legacy seed: %w", legacyKErr)
+				}
+
+				fmt.Println("[monero addresses from 25 word legacy seed]")
+				fmt.Println()
+				fmt.Printf("%s (primary address)\n", legacyKeys.PrimaryAddress)
+				for j, subaddr := range legacyKeys.Subaddresses {
+					fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
+				}
+				fmt.Println()
 			}
 		} else {
 			mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, count, seedPassphrase, false, 0)
