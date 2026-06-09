@@ -45,6 +45,13 @@ const (
 	maxWidth = 72
 )
 
+// Populated at build time via -ldflags (set by GoReleaser and `go build -ldflags`).
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 var (
 	baseStyle  = lipgloss.NewStyle().Margin(0, 0, 1, 2) //nolint:mnd
 	red        = lipgloss.Color(completeColor("#FF4444", "196", "9"))
@@ -125,6 +132,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --to-dkim --output /etc/opendkim/keys/mail.private
   seedify ~/.ssh/id_ed25519 --to-dkim --dkim-selector mail --dkim-domain example.com --output /etc/opendkim/keys/mail.private
   seedify deployment-ssh-key --to-dkim --dkim-domain mail1.npub.cx --dkim-selector mail2026`,
+		Version:      fmt.Sprintf("%s (commit %s, built %s)", version, commit, date),
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
