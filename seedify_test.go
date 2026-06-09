@@ -799,27 +799,40 @@ func TestMoneroLegacyRoundtrip(t *testing.T) {
 	}
 }
 
-// TestMoneroLegacySeedKnownVector tests against a known-good vector derived from
-// the go-monero library's own test vector (seed → keys):
+// TestMoneroLegacySeedKnownVector tests against two known-good external vectors.
+//
+// Vector 1 — go-monero library test vector:
 //
 //	spend private key: 0cca07dc4e90fc738fffdb2561dddd7a94d0dc8977d0229303d7509a10c9d705
-//	mnemonic:          wiggle drowning auburn aquarium attire meant impel phase
-//	                   soothe heron android mechanic inroads energy smog niece
-//	                   enforce syllabus exquisite lush bluntly rage siblings soda syllabus
+//	mnemonic:          wiggle drowning auburn ... siblings soda syllabus
 //
-// We verify that DeriveMoneroKeysFromLegacySeed decodes this vector without error
-// and produces a mainnet primary address.
+// Vector 2 — independently verified via monero-wallet-cli:
+//
+//	spend private key: 11830f8a232b7b0152a709340bb653357d2aa92985f83b6e0dcf7cb2bf11330d
+//	mnemonic:          siblings together icing ... fight goggles egotistic
+//	primary address:   435zP7PmQwYhjTJu7AmU8SigKVMsY9j3yjQfnwnfjRZM89Jp2ZxEpsyXNPKkr5hfwBLeYTiZeqfaLihPNWWEzbgN77gqFHp
 func TestMoneroLegacySeedKnownVector(t *testing.T) {
 	is := is.New(t)
 
-	const knownMnemonic = "wiggle drowning auburn aquarium attire meant impel phase " +
+	// Vector 1: go-monero library test vector — spend key known, address format checked.
+	const v1Mnemonic = "wiggle drowning auburn aquarium attire meant impel phase " +
 		"soothe heron android mechanic inroads energy smog niece " +
 		"enforce syllabus exquisite lush bluntly rage siblings soda syllabus"
 
-	keys, err := DeriveMoneroKeysFromLegacySeed(knownMnemonic, 0)
+	v1Keys, err := DeriveMoneroKeysFromLegacySeed(v1Mnemonic, 0)
 	is.NoErr(err)
-	is.True(strings.HasPrefix(keys.PrimaryAddress, "4"))
-	is.Equal(len(keys.PrimaryAddress), 95)
+	is.True(strings.HasPrefix(v1Keys.PrimaryAddress, "4"))
+	is.Equal(len(v1Keys.PrimaryAddress), 95)
+
+	// Vector 2: independently verified — spend key, mnemonic, and address all pinned.
+	const v2Mnemonic = "siblings together icing idols sovereign sprig suture aloof " +
+		"egotistic speedy diplomat impel wise glass long cafe " +
+		"perfect awakened ought enforce voted mime fight goggles egotistic"
+	const v2Address = "435zP7PmQwYhjTJu7AmU8SigKVMsY9j3yjQfnwnfjRZM89Jp2ZxEpsyXNPKkr5hfwBLeYTiZeqfaLihPNWWEzbgN77gqFHp"
+
+	v2Keys, err := DeriveMoneroKeysFromLegacySeed(v2Mnemonic, 0)
+	is.NoErr(err)
+	is.Equal(v2Keys.PrimaryAddress, v2Address)
 }
 
 // TestDeriveBitcoinLegacyKeys_ValidFormat tests that DeriveBitcoinLegacyKeys produces valid address and WIF
