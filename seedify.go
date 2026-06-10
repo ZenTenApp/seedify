@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math"
 	"math/big"
@@ -47,6 +48,7 @@ import (
 	"github.com/tyler-smith/go-bip39"
 	"github.com/tyler-smith/go-bip39/wordlists"
 	"golang.org/x/crypto/blake2b"
+	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -1644,6 +1646,114 @@ func DeriveMoneroKeys(mnemonic string, numSubaddresses int) (*MoneroKeys, error)
 	// Generate subaddresses
 	subaddresses := make([]string, 0, numSubaddresses)
 	for i := uint32(1); i <= uint32(numSubaddresses); i++ { //nolint:gosec // numSubaddresses is always small (single digits)
+		subaddr, err := deriveMoneroSubaddress(viewSecKey, spendPubKey, 0, i)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive subaddress (0,%d): %w", i, err)
+		}
+		subaddresses = append(subaddresses, subaddr)
+	}
+
+	return &MoneroKeys{
+		PrimaryAddress: primaryAddr,
+		Subaddresses:   subaddresses,
+	}, nil
+}
+
+// moneroLegacyChecksumIndex computes the CRC32-based checksum word index for a
+// 25-word Monero legacy mnemonic. It concatenates the first 3 characters of
+// each of the 24 data words, computes CRC32 (IEEE), and takes the result mod 24.
+func moneroLegacyChecksumIndex(words []string) int {
+	const (
+		prefixLen       = 3
+		moneroDataWords = 24
+	)
+	buf := make([]byte, 0, moneroDataWords*prefixLen)
+	for _, w := range words[:moneroDataWords] {
+		if len(w) >= prefixLen {
+			buf = append(buf, w[:prefixLen]...)
+		} else {
+			buf = append(buf, w...)
+		}
+	}
+	return int(crc32.ChecksumIEEE(buf) % moneroDataWords)
+}
+
+// moneroLegacyBytesToWords encodes 32 raw key bytes into a 25-word Monero
+// legacy (Electrum-style) mnemonic. The encoding splits the 32 bytes into
+// eight 4-byte little-endian groups; each group is mapped to three words
+// using base-1626 modular arithmetic:
+//
+//	w1 = v % 1626
+//	w2 = (v/1626 + w1) % 1626
+//	w3 = (v/1626/1626 + w2) % 1626
+//
+// The 25th word is the checksum word at index CRC32(prefixes) % 24.
+func moneroLegacyBytesToWords(keyBytes []byte) ([]string, error) {
+	if len(keyBytes) != 32 { //nolint:mnd
+		return nil, fmt.Errorf("monero legacy seed: expected 32 bytes, got %d", len(keyBytes))
+	}
+	const (
+		n       = 1626 // wordlist length
+		nGroups = 8    // 32 bytes / 4 bytes per group
+	)
+	words := make([]string, 0, 25) //nolint:mnd
+	for i := range nGroups {
+		v := binary.LittleEndian.Uint32(keyBytes[4*i : 4*i+4])
+		w1 := v % n
+		w2 := (v/n + w1) % n
+		w3 := (v/n/n + w2) % n
+		words = append(words, moneroLegacyWordlist[w1], moneroLegacyWordlist[w2], moneroLegacyWordlist[w3])
+	}
+	// Append the CRC32 checksum word.
+	words = append(words, words[moneroLegacyChecksumIndex(words)])
+	return words, nil
+}
+
+// ToMoneroLegacySeed derives the Monero legacy 25-word (Electrum-style) seed
+// from an Ed25519 SSH private key. The derivation uses the same spend key as
+// the Polyseed path for the same SSH key — both seeds represent the same wallet:
+//
+//  1. Extract the 32-byte Ed25519 seed from the SSH key.
+//  2. Optionally mix in a seed passphrase (same combineSeedPassphrase as other
+//     mnemonic functions, applied before reduction so it feeds directly into
+//     the spend key scalar).
+//  3. Apply scReduce32 to obtain a canonical Monero spend key scalar.
+//  4. Encode the reduced bytes into 24 + 1 (checksum) words.
+func ToMoneroLegacySeed(key *ed25519.PrivateKey, seedPassphrase string) (string, error) {
+	seedBytes := combineSeedPassphrase(key.Seed(), seedPassphrase)
+	reduced := scReduce32(seedBytes)
+	words, err := moneroLegacyBytesToWords(reduced)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode Monero legacy seed: %w", err)
+	}
+	return strings.Join(words, " "), nil
+}
+
+// DeriveMoneroKeysFromLegacySeed derives the Monero primary address and
+// subaddresses from a 25-word Monero legacy (Electrum-style) mnemonic.
+// It delegates key decoding to the go-monero library (utils.NewSeedMnemonic),
+// then builds addresses using the shared helpers.
+//
+// Parameters:
+//   - mnemonic: A valid 25-word Monero legacy mnemonic (space-separated)
+//   - numSubaddresses: Number of subaddresses to generate (0 for none)
+func DeriveMoneroKeysFromLegacySeed(mnemonic string, numSubaddresses int) (*MoneroKeys, error) {
+	seed, err := utils.NewSeedMnemonic(mnemonic, utils.English)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode Monero legacy mnemonic: %w", err)
+	}
+	keyPair := seed.FullKeyPair()
+	viewSecKey := keyPair.ViewKeyPair().PrivateKey().Bytes()
+	spendPubKey := keyPair.SpendKeyPair().PublicKey().Bytes()
+	viewPubKey := keyPair.ViewKeyPair().PublicKey().Bytes()
+
+	primaryAddr, err := buildMoneroAddress(0x12, spendPubKey, viewPubKey) //nolint:mnd
+	if err != nil {
+		return nil, fmt.Errorf("failed to build primary address: %w", err)
+	}
+
+	subaddresses := make([]string, 0, numSubaddresses)
+	for i := uint32(1); i <= uint32(numSubaddresses); i++ { //nolint:gosec
 		subaddr, err := deriveMoneroSubaddress(viewSecKey, spendPubKey, 0, i)
 		if err != nil {
 			return nil, fmt.Errorf("failed to derive subaddress (0,%d): %w", i, err)
@@ -3344,5 +3454,176 @@ func DeriveOnionServiceKeys(key *ed25519.PrivateKey) (*OnionServiceKeys, error) 
 		PrivateKeyFile: privFile,
 		PublicKeyFile:  pubFile,
 		HostnameFile:   []byte(onionAddr + "\n"),
+	}, nil
+}
+
+// i2pDestTotalKeyBytes is the fixed size of the key region that precedes the
+// Certificate in every I2P Destination / RouterIdentity structure.
+// Per the I2P Common Structures spec it is always exactly 384 bytes.
+const i2pDestTotalKeyBytes = 384
+
+// i2pKeyCertType is the Certificate type code for a Key Certificate (0x05).
+const i2pKeyCertType = byte(0x05)
+
+// i2pSigTypeEd25519 is the Signing Public Key type code for
+// EdDSA_SHA512_Ed25519 (type 7, big-endian uint16).
+const i2pSigTypeEd25519 = uint16(7)
+
+// i2pCryptoTypeX25519 is the Crypto Public Key type code for X25519
+// (type 4, big-endian uint16).
+const i2pCryptoTypeX25519 = uint16(4)
+
+// i2pUint16HighByteShift is the right-shift used to extract the high byte of a
+// big-endian uint16 type field in an I2P structure (1 byte = 8 bits).
+const i2pUint16HighByteShift = 8
+
+// i2pPrivKeyComponentSize is the size in bytes of each private-key component
+// (X25519 scalar and Ed25519 seed) appended to the keys.dat Destination file.
+const i2pPrivKeyComponentSize = 32
+
+// I2PDestinationKeys holds all material needed to deploy or advertise an
+// I2P Destination derived from an Ed25519 SSH key.
+type I2PDestinationKeys struct {
+	// B32Address is the 52-character base32 .b32.i2p hostname, e.g.
+	// "abc...abc.b32.i2p". This is the public identity of the destination.
+	B32Address string
+
+	// DestinationBytes is the serialised public Destination structure
+	// (384-byte key region + 7-byte Key Certificate). These bytes are what
+	// an I2P router uses to identify and address the service.
+	DestinationBytes []byte
+
+	// PrivateKeyFile is the content suitable for writing as the i2pd
+	// "destination.dat" / "keys.dat" private-key file:
+	//   Destination bytes  (public, variable length)
+	//   X25519 private key (32 bytes, little-endian)
+	//   Ed25519 private key seed (32 bytes)
+	PrivateKeyFile []byte
+
+	// X25519PrivKey is the 32-byte clamped X25519 private scalar used for
+	// ElGamal / ECIES-X25519 decryption of incoming garlic messages.
+	X25519PrivKey []byte
+
+	// Ed25519Seed is the 32-byte seed for the Ed25519 signing key used to
+	// sign lease sets published to the I2P NetDB.
+	Ed25519Seed []byte
+}
+
+// DeriveI2PDestinationKeys deterministically derives an I2P Destination
+// (Ed25519 signing + X25519 encryption) from an Ed25519 SSH private key.
+//
+// Two independent sub-keys are produced via domain separation:
+//
+//	signing key : SHA-256("seedify:i2p:sign:" || seed) → Ed25519 key pair
+//	encryption key: SHA-256("seedify:i2p:enc:"  || seed) → X25519 key pair
+//
+// The returned I2PDestinationKeys contains:
+//   - B32Address:       the 52-char base32 hostname (add ".b32.i2p" suffix to use)
+//   - DestinationBytes: the serialised public Destination (391 bytes)
+//   - PrivateKeyFile:   write to <i2pd tunnel dir>/keys.dat (or destination.dat)
+//
+// The Destination layout follows the I2P Common Structures spec (0.9.44+):
+//
+//	[X25519 pubkey (32 B)] [zero padding (320 B)] [Ed25519 pubkey (32 B)]
+//	[Key Certificate: type=5, len=4, sigType=7, cryptoType=4]
+//
+// Security note: the derived destination key is cryptographically linked to
+// the source SSH key. Compromising either key compromises both.
+func DeriveI2PDestinationKeys(key *ed25519.PrivateKey) (*I2PDestinationKeys, error) {
+	// --- Signing sub-key (Ed25519) -------------------------------------------
+	signLabel := []byte("seedify:i2p:sign:")
+	signInput := make([]byte, len(signLabel)+len(key.Seed()))
+	copy(signInput, signLabel)
+	copy(signInput[len(signLabel):], key.Seed())
+	signSubSeed := sha256.Sum256(signInput)
+
+	signPrivKey := ed25519.NewKeyFromSeed(signSubSeed[:])
+	signPubKey := signPrivKey.Public().(ed25519.PublicKey) // 32 bytes, little-endian
+
+	// --- Encryption sub-key (X25519) -----------------------------------------
+	encLabel := []byte("seedify:i2p:enc:")
+	encInput := make([]byte, len(encLabel)+len(key.Seed()))
+	copy(encInput, encLabel)
+	copy(encInput[len(encLabel):], key.Seed())
+	encSubSeed := sha256.Sum256(encInput)
+
+	// Clamp the scalar per RFC 7748 §5.
+	encPrivScalar := encSubSeed
+	encPrivScalar[0] &= 248
+	encPrivScalar[31] &= 127
+	encPrivScalar[31] |= 64
+
+	encPubKey, x25519Err := curve25519.X25519(encPrivScalar[:], curve25519.Basepoint)
+	if x25519Err != nil {
+		return nil, fmt.Errorf("i2p: X25519 public key derivation failed: %w", x25519Err)
+	}
+	// X25519 keys are stored little-endian in I2P (they already are from X25519).
+
+	// --- Destination serialisation -------------------------------------------
+	// Layout (spec §KeysAndCert / §Destination, 0.9.44+ with Key Certificate):
+	//
+	// Bytes 0–383   (384 bytes): key region
+	//   [0..31]    = X25519 encryption public key  (32 bytes, crypto key at start)
+	//   [32..351]  = zero padding                  (320 bytes)
+	//   [352..383] = Ed25519 signing public key     (32 bytes, signing key at end)
+	//
+	// Bytes 384–390 (7 bytes): Key Certificate
+	//   [384]      = type  = 0x05 (Key)
+	//   [385..386] = length = 0x00 0x04  (4 bytes payload)
+	//   [387..388] = signing key type  = 0x00 0x07 (EdDSA_SHA512_Ed25519)
+	//   [389..390] = crypto  key type  = 0x00 0x04 (X25519)
+
+	const (
+		cryptoKeySize      = 32                                                 // X25519
+		signKeySize        = 32                                                 // Ed25519
+		paddingSize        = i2pDestTotalKeyBytes - cryptoKeySize - signKeySize // 320
+		keyCertPayloadSize = 4
+		keyCertTotalSize   = 1 + 2 + keyCertPayloadSize              // type(1) + len(2) + payload(4) = 7
+		destSize           = i2pDestTotalKeyBytes + keyCertTotalSize // 391
+	)
+
+	destBytes := make([]byte, destSize)
+	// Crypto (encryption) public key at offset 0.
+	copy(destBytes[0:], encPubKey)
+	// Padding bytes [32..351] are already zero from make().
+	// Signing public key at offset 352.
+	copy(destBytes[cryptoKeySize+paddingSize:], signPubKey)
+	// Key Certificate.
+	offset := i2pDestTotalKeyBytes
+	destBytes[offset] = i2pKeyCertType
+	offset++
+	// Certificate payload length = 4, big-endian uint16.
+	destBytes[offset] = 0x00
+	destBytes[offset+1] = 0x04
+	offset += 2
+	// Signing key type = 7 (EdDSA_SHA512_Ed25519), big-endian.
+	destBytes[offset] = byte(i2pSigTypeEd25519 >> i2pUint16HighByteShift)
+	destBytes[offset+1] = byte(i2pSigTypeEd25519)
+	offset += 2
+	// Crypto key type = 4 (X25519), big-endian.
+	destBytes[offset] = byte(i2pCryptoTypeX25519 >> i2pUint16HighByteShift)
+	destBytes[offset+1] = byte(i2pCryptoTypeX25519)
+
+	// --- b32 address ---------------------------------------------------------
+	// b32 = base32(SHA-256(destBytes)) — no padding, lowercase, + ".b32.i2p"
+	destHash := sha256.Sum256(destBytes)
+	b32Enc := strings.ToLower(
+		strings.TrimRight(base32.StdEncoding.EncodeToString(destHash[:]), "="),
+	)
+	b32Addr := b32Enc + ".b32.i2p"
+
+	// --- Private key file (i2pd keys.dat / destination.dat) ------------------
+	// Format: Destination bytes || X25519 private scalar (32 B) || Ed25519 seed (32 B)
+	privFile := make([]byte, 0, destSize+i2pPrivKeyComponentSize+i2pPrivKeyComponentSize)
+	privFile = append(privFile, destBytes...)
+	privFile = append(privFile, encPrivScalar[:]...)
+	privFile = append(privFile, signSubSeed[:]...)
+
+	return &I2PDestinationKeys{
+		B32Address:       b32Addr,
+		DestinationBytes: destBytes,
+		PrivateKeyFile:   privFile,
+		X25519PrivKey:    encPrivScalar[:],
+		Ed25519Seed:      signSubSeed[:],
 	}, nil
 }

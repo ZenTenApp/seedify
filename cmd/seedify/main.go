@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -44,6 +45,13 @@ const (
 	maxWidth = 72
 )
 
+// Populated at build time via -ldflags (set by GoReleaser and `go build -ldflags`).
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 var (
 	baseStyle  = lipgloss.NewStyle().Margin(0, 0, 1, 2) //nolint:mnd
 	red        = lipgloss.Color(completeColor("#FF4444", "196", "9"))
@@ -64,16 +72,19 @@ var (
 	solana          bool
 	tron            bool
 	monero          bool
+	moneroLegacy    bool
 	zenprofile      bool
 	publishRelays   string
 	zenprofileAppID string
 	polyseedYear    string
 	polyseedMonth   string
+	polyseedAll     bool
 
 	// derive-key flags.
 	deriveKeyToRSA           bool
 	deriveKeyToDKIM          bool
 	deriveKeyToOnion         bool
+	deriveKeyToI2P           bool
 	deriveKeyPKCS8           bool
 	deriveKeyToPGP           bool
 	deriveKeyPGPName         string
@@ -123,6 +134,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --to-dkim --output /etc/opendkim/keys/mail.private
   seedify ~/.ssh/id_ed25519 --to-dkim --dkim-selector mail --dkim-domain example.com --output /etc/opendkim/keys/mail.private
   seedify deployment-ssh-key --to-dkim --dkim-domain mail1.npub.cx --dkim-selector mail2026`,
+		Version:      fmt.Sprintf("%s (commit %s, built %s)", version, commit, date),
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -163,6 +175,11 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				return errors.New("--to-onion cannot be combined with --to-rsa, --to-dkim, or --to-pgp")
 			}
 
+			// --to-i2p is mutually exclusive with all other derivation modes.
+			if deriveKeyToI2P && (deriveKeyToRSA || deriveKeyToDKIM || deriveKeyToPGP || deriveKeyToOnion) {
+				return errors.New("--to-i2p cannot be combined with --to-rsa, --to-dkim, --to-pgp, or --to-onion")
+			}
+
 			// --pgp-name and --pgp-email are both required when --to-pgp is set.
 			if deriveKeyToPGP && deriveKeyPGPName == "" {
 				return errors.New("--pgp-name is required with --to-pgp")
@@ -174,6 +191,11 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			// Handle --to-onion: derive a Tor v3 hidden service identity from the Ed25519 key.
 			if deriveKeyToOnion {
 				return runDeriveOnionKey(keyPath)
+			}
+
+			// Handle --to-i2p: derive an I2P Destination from the Ed25519 key.
+			if deriveKeyToI2P {
+				return runDeriveI2PKey(keyPath)
 			}
 
 			// Handle --to-rsa: derive an RSA key from the Ed25519 key and write to disk (or stdout).
@@ -246,7 +268,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			// also show the relevant portions of the full output for those chains.
 			// When --words is specified, output only the requested word counts (no derivations).
 			if !full {
-				hasDerivationFlags := bitcoin || ethereum || zcash || nostr || solana || tron || monero
+				hasDerivationFlags := bitcoin || ethereum || zcash || nostr || solana || tron || monero || moneroLegacy || polyseedAll
 				hasWordsFlag := wordCountStr != ""
 
 				if hasWordsFlag {
@@ -256,7 +278,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 						return fmt.Errorf("invalid word counts: %w", err)
 					}
 					err = generateUnifiedOutput(keyPath, parsedCounts, seedPassphrase,
-						false, false, false, false, false, false, false, false)
+						false, false, false, false, false, false, false, false, false)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
 							return formatPasswordError(err)
@@ -264,8 +286,22 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 						return err
 					}
 				} else if hasDerivationFlags {
-					err := generatePhrasesWithDerivations(keyPath, seedPassphrase,
-						nostr, bitcoin, ethereum, zcash, solana, tron, monero)
+					// Route through generateUnifiedOutput so --xmr-legacy is handled uniformly.
+					var wc []int
+					if bitcoin {
+						wc = append(wc, 12) //nolint:mnd
+					}
+					if monero || moneroLegacy {
+						wc = append(wc, 16) //nolint:mnd
+					}
+					if bitcoin || ethereum || zcash || solana || tron || nostr {
+						wc = append(wc, 24) //nolint:mnd
+					}
+					if len(wc) == 0 {
+						wc = []int{16}
+					}
+					err := generateUnifiedOutput(keyPath, wc, seedPassphrase,
+						nostr, false, bitcoin, ethereum, zcash, solana, tron, monero, moneroLegacy)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
 							return formatPasswordError(err)
@@ -287,13 +323,13 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			// --full: generate unified output (seed phrases + wallet derivations)
 			hasWordsFlag := wordCountStr != ""
 			hasNostrFlag := nostr
-			hasCryptoFlags := bitcoin || ethereum || zcash || solana || tron || monero || zenprofile
+			hasCryptoFlags := bitcoin || ethereum || zcash || solana || tron || monero || moneroLegacy || polyseedAll || zenprofile
 			hasAnyDerivationFlags := hasWordsFlag || hasNostrFlag || hasCryptoFlags
 
 			var wordCounts []int
 			var deriveNostr bool
 			var showBrave bool
-			var deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr bool
+			var deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy bool
 
 			if !hasAnyDerivationFlags {
 				wordCounts = []int{12, 15, 16, 18, 21, 24}
@@ -305,6 +341,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				deriveSol = true
 				deriveTron = true
 				deriveXmr = true
+				deriveXmrLegacy = true
 			} else {
 				if hasWordsFlag {
 					parsedCounts, err := parseWordCounts(wordCountStr)
@@ -317,7 +354,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 					if bitcoin {
 						wordCounts = append(wordCounts, 12) //nolint:mnd
 					}
-					if monero {
+					if monero || moneroLegacy || polyseedAll {
 						wordCounts = append(wordCounts, 16) //nolint:mnd
 					}
 					if bitcoin || ethereum || zcash || solana || tron {
@@ -332,9 +369,10 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				deriveSol = solana
 				deriveTron = tron
 				deriveXmr = monero
+				deriveXmrLegacy = moneroLegacy
 			}
 
-			uErr := generateUnifiedOutput(keyPath, wordCounts, seedPassphrase, deriveNostr, showBrave, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr)
+			uErr := generateUnifiedOutput(keyPath, wordCounts, seedPassphrase, deriveNostr, showBrave, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy)
 			if uErr != nil && strings.Contains(uErr.Error(), "key is not password-protected") {
 				return formatPasswordError(uErr)
 			}
@@ -480,14 +518,17 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&solana, "sol", false, "Derive Solana address from 24-word seed phrase")
 	rootCmd.PersistentFlags().BoolVar(&tron, "tron", false, "Derive Tron address from 24-word seed phrase")
 	rootCmd.PersistentFlags().BoolVar(&monero, "xmr", false, "Derive Monero address from 16-word polyseed")
+	rootCmd.PersistentFlags().BoolVar(&moneroLegacy, "xmr-legacy", false, "Derive Monero address from 25-word legacy seed (shown alongside --xmr polyseed output)")
 	rootCmd.PersistentFlags().BoolVar(&zenprofile, "zenprofile", false, "Output public keys and addresses as DNS JSON to stdout")
 	rootCmd.PersistentFlags().StringVar(&publishRelays, "publish", "", "When used with --zenprofile: publish NIP-78 Kind 30078 event to these relays (comma-separated, e.g. relay.primal.net,relay.damus.io)")
 	rootCmd.PersistentFlags().StringVar(&zenprofileAppID, "zenprofile-app-id", "app.zenprofile.identifier", "When used with --zenprofile --publish: NIP-78 d tag value for the event identifier")
 	rootCmd.PersistentFlags().StringVar(&polyseedYear, "polyseed-year", "", "Override polyseed year (YYYY). Default: current year")
 	rootCmd.PersistentFlags().StringVar(&polyseedMonth, "polyseed-month", "", "Override polyseed month (1-12). Default: 1 (January)")
+	rootCmd.PersistentFlags().BoolVar(&polyseedAll, "all-polyseeds", false, "Generate every possible polyseed (Nov 2021 – current month), one per month with correct birthday")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToRSA, "to-rsa", false, "Derive an RSA key from the input Ed25519 key and write it to --output")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToDKIM, "to-dkim", false, "Derive a DKIM RSA keypair from the input Ed25519 key; when --dkim-domain is set, writes config/dkim/<domain>/<selector>.private and .public automatically")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToOnion, "to-onion", false, "Derive a Tor v3 hidden service identity from the input Ed25519 key; use --output <dir> to write the Tor key files")
+	rootCmd.PersistentFlags().BoolVar(&deriveKeyToI2P, "to-i2p", false, "Derive an I2P Destination (Ed25519 signing + X25519 encryption) from the input Ed25519 key; use --output <dir> to write the keys.dat file")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyPKCS8, "openssl-compatible", false, "Write an encrypted PKCS#8 PEM file instead of OpenSSH format (used with --to-rsa; compatible with openssl pkey -check)")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToPGP, "to-pgp", false, "Derive an OpenPGP RSA keypair and write an ASCII-armored secret key (.asc) to --output")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyPGPName, "pgp-name", "", "Full name for the OpenPGP UID, e.g. Alice (used with --to-pgp)")
@@ -544,6 +585,35 @@ func getPolyseedMonth() (time.Month, error) {
 // of the given year and month, suitable for use as a polyseed birthday.
 func birthdayFromYearMonth(year int, month time.Month) uint64 {
 	return uint64(time.Date(year, month, 1, 0, 0, 0, 0, time.UTC).Unix()) //nolint:gosec
+}
+
+type yearMonth struct {
+	year  int
+	month time.Month
+}
+
+// allPolyseedMonths returns every (year, month) pair from the Polyseed epoch
+// (November 2021 — the library's base timestamp) through the current month,
+// in chronological order. Each pair represents a unique wallet birthday.
+func allPolyseedMonths() []yearMonth {
+	// Polyseed epoch: 1 Nov 2021 (unix 1635768000)
+	const epochYear, epochMonth = 2021, time.November
+	now := time.Now().UTC()
+	var out []yearMonth
+	for y := epochYear; y <= now.Year(); y++ {
+		startM := time.January
+		if y == epochYear {
+			startM = epochMonth
+		}
+		endM := time.December
+		if y == now.Year() {
+			endM = now.Month()
+		}
+		for m := startM; m <= endM; m++ {
+			out = append(out, yearMonth{year: y, month: m})
+		}
+	}
+	return out
 }
 
 // runDeriveKey is the handler for --to-rsa.
@@ -877,6 +947,87 @@ func runDeriveOnionKey(keyPath string) error {
 	fmt.Fprintf(os.Stderr, "  %s\n", secretKeyPath)
 	fmt.Fprintf(os.Stderr, "  %s\n", publicKeyPath)
 	fmt.Fprintf(os.Stderr, "  %s\n", hostnamePath)
+
+	return nil
+}
+
+// runDeriveI2PKey handles --to-i2p: derives an I2P Destination (Ed25519 signing
+// key + X25519 encryption key) from the source Ed25519 key and either writes
+// the keys.dat file to a directory (when --output <dir> is given) or prints
+// only the .b32.i2p address to stdout.
+//
+// When --output is set the following file is written:
+//
+//	<dir>/keys.dat  (391 + 64 bytes, permissions 0600)
+//
+// keys.dat is the private-key file format used by i2pd and Java I2P:
+//
+//	Destination bytes (public, 391 B) || X25519 private scalar (32 B) || Ed25519 seed (32 B)
+//
+// Point i2pd at the directory with:
+//
+//	[yourservice]
+//	type = server
+//	keys = keys.dat
+func runDeriveI2PKey(keyPath string) error {
+	f, err := openFileOrStdin(keyPath)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	bts, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+
+	key, err := parsePrivateKey(bts, nil)
+	if err != nil && isPasswordError(err) {
+		pass, passErr := askKeyPassphrase(keyPath)
+		if passErr != nil {
+			return passErr
+		}
+		key, err = parsePrivateKey(bts, pass)
+		if err != nil {
+			return fmt.Errorf("could not parse key with passphrase: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("could not parse key: %w", err)
+	}
+
+	ed25519Key, ok := key.(*ed25519.PrivateKey)
+	if !ok {
+		return unsupportedKeyTypeError(key)
+	}
+
+	i2pKeys, deriveErr := seedify.DeriveI2PDestinationKeys(ed25519Key)
+	if deriveErr != nil {
+		return fmt.Errorf("could not derive I2P destination keys: %w", deriveErr)
+	}
+
+	// When no --output directory is given, print the address and private keys.
+	if deriveKeyOutput == "" {
+		fmt.Printf("B32 Address  : %s\n", i2pKeys.B32Address)
+		fmt.Printf("X25519 PrivKey (hex): %x\n", i2pKeys.X25519PrivKey)
+		fmt.Printf("Ed25519 Seed  (hex): %x\n", i2pKeys.Ed25519Seed)
+		return nil
+	}
+
+	// Create the output directory with restrictive permissions (owner only).
+	if mkdirErr := os.MkdirAll(deriveKeyOutput, 0o700); mkdirErr != nil { //nolint:mnd
+		return fmt.Errorf("could not create output directory %s: %w", deriveKeyOutput, mkdirErr)
+	}
+
+	keysPath := filepath.Join(deriveKeyOutput, "keys.dat")
+
+	if writeErr := os.WriteFile(keysPath, i2pKeys.PrivateKeyFile, 0o600); writeErr != nil { //nolint:mnd
+		return fmt.Errorf("could not write %s: %w", keysPath, writeErr)
+	}
+
+	fmt.Fprintf(os.Stderr, "\nWARNING: The derived I2P key is cryptographically linked to its source key.\n")
+	fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
+	fmt.Fprintf(os.Stderr, "B32 address: %s\n", i2pKeys.B32Address)
+	fmt.Fprintf(os.Stderr, "File written to: %s\n", keysPath)
 
 	return nil
 }
@@ -1217,8 +1368,10 @@ func printPEMPhrase(label string, phrase string) {
 	fmt.Printf("-----BEGIN %s-----\n%s\n-----END %s-----\n", label, phrase, label)
 }
 
-// printSSHKeyPair prints the SSH public key (RFC 4716 OpenSSH PEM) and the
-// private key (OpenSSH PEM), each with the base64 value on a single unwrapped line.
+// printSSHKeyPair prints the SSH public key (RFC 4716 OpenSSH PEM) with the
+// key type prepended inside the block (ssh-ed25519 <base64>), the private key
+// (OpenSSH PEM), the raw 32-byte ed25519 seed in hex, and the SHA-256 / MD5
+// fingerprints of the public key. Each base64 value is on a single unwrapped line.
 // privateKeyPEM must be the raw PEM bytes as read from disk.
 func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte) error {
 	sshPubKey, err := ssh.NewPublicKey(ed25519Key.Public())
@@ -1227,7 +1380,7 @@ func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte) error
 	}
 
 	pubB64 := base64.StdEncoding.EncodeToString(sshPubKey.Marshal())
-	fmt.Printf("-----BEGIN OPENSSH PUBLIC KEY-----\n%s\n-----END OPENSSH PUBLIC KEY-----\n", pubB64)
+	fmt.Printf("-----BEGIN OPENSSH PUBLIC KEY-----\nssh-ed25519 %s\n-----END OPENSSH PUBLIC KEY-----\n", pubB64)
 
 	// pem.Decode extracts the raw OpenSSH key bytes so we can re-encode them
 	// as a single unwrapped base64 line instead of the default 64-char wrapping.
@@ -1238,6 +1391,16 @@ func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte) error
 
 	privB64 := base64.StdEncoding.EncodeToString(block.Bytes)
 	fmt.Printf("\n-----BEGIN OPENSSH PRIVATE KEY-----\n%s\n-----END OPENSSH PRIVATE KEY-----\n", privB64)
+
+	// Raw 32-byte seed — the root secret from which the key pair is derived.
+	seedHex := hex.EncodeToString(ed25519Key.Seed())
+	fmt.Printf("\n-----BEGIN ED25519 SEED-----\n%s\n-----END ED25519 SEED-----\n", seedHex)
+
+	// Public key fingerprints (SHA-256 is the modern default; MD5 is shown for
+	// compatibility with older ssh-keygen / authorized_keys tooling).
+	sha256fp := strings.TrimPrefix(ssh.FingerprintSHA256(sshPubKey), "SHA256:")
+	md5fp := ssh.FingerprintLegacyMD5(sshPubKey)
+	fmt.Printf("\n-----BEGIN OPENSSH FINGERPRINT-----\n%s (SHA256)\n%s (MD5)\n-----END OPENSSH FINGERPRINT-----\n", sha256fp, md5fp)
 
 	return nil
 }
@@ -1303,22 +1466,30 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	fmt.Print("\n\n")
 	printPEMPhrase("12-WORD SEED PHRASE", mnemonic12)
 
-	// 2. 16-word seed phrases (Polyseed) — one per polyseed year
-	years, err := getPolyseedYears()
-	if err != nil {
-		return fmt.Errorf("invalid --polyseed-year: %w", err)
+	// 2. 16-word seed phrases (Polyseed) — one per slot
+	var slots16 []yearMonth
+	if polyseedAll {
+		slots16 = allPolyseedMonths()
+	} else {
+		years, yErr := getPolyseedYears()
+		if yErr != nil {
+			return fmt.Errorf("invalid --polyseed-year: %w", yErr)
+		}
+		month, mErr := getPolyseedMonth()
+		if mErr != nil {
+			return fmt.Errorf("invalid --polyseed-month: %w", mErr)
+		}
+		for _, y := range years {
+			slots16 = append(slots16, yearMonth{year: y, month: month})
+		}
 	}
-	month, err := getPolyseedMonth()
-	if err != nil {
-		return fmt.Errorf("invalid --polyseed-month: %w", err)
-	}
-	for _, year := range years {
-		mnemonic16, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(year, month)) //nolint:mnd
+	for _, slot := range slots16 {
+		mnemonic16, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(slot.year, slot.month)) //nolint:mnd
 		if mnErr != nil {
-			return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", year, int(month), mnErr)
+			return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
 		}
 		fmt.Print("\n\n")
-		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(month), year), mnemonic16)
+		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(slot.month), slot.year), mnemonic16)
 	}
 
 	// 3. 24-word seed phrase (standard, no prefix)
@@ -1329,6 +1500,14 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	// 2 empty lines between outputs
 	fmt.Print("\n\n")
 	printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
+
+	// 3b. Monero 25-word legacy seed (Electrum-style)
+	moneroLegacySeed, err := seedify.ToMoneroLegacySeed(ed25519Key, seedPassphrase)
+	if err != nil {
+		return fmt.Errorf("could not generate Monero legacy seed: %w", err)
+	}
+	fmt.Print("\n\n")
+	printPEMPhrase("25-WORD MONERO LEGACY SEED", moneroLegacySeed)
 
 	// 4. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
 	nostrKeys, err := seedify.DeriveNostrKeysWithHex(mnemonic24, "")
@@ -1355,218 +1534,6 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 
 	// 2 empty lines after the last output
 	fmt.Print("\n\n")
-
-	return nil
-}
-
-// generatePhrasesWithDerivations outputs the curated seed phrases followed by
-// only the derivations requested by the flags (nostr, btc, eth, zec, sol, tron, xmr).
-// Each flag shows the relevant portions of the full output for that chain.
-//
-//nolint:funlen
-func generatePhrasesWithDerivations(keyPath string, seedPassphrase string, deriveNostr, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr bool) error {
-	f, err := openFileOrStdin(keyPath)
-	if err != nil {
-		return fmt.Errorf("could not read key: %w", err)
-	}
-	defer f.Close() //nolint:errcheck
-	bts, err := io.ReadAll(f)
-	if err != nil {
-		return fmt.Errorf("could not read key: %w", err)
-	}
-
-	isProtected, err := isKeyPasswordProtected(bts)
-	if err == nil && !isProtected {
-		return fmt.Errorf("key is not password-protected: keys are required to be password-protected")
-	}
-
-	key, err := parsePrivateKey(bts, nil)
-	if err != nil && isPasswordError(err) {
-		pass, passErr := askKeyPassphrase(keyPath)
-		if passErr != nil {
-			return passErr
-		}
-		key, err = parsePrivateKey(bts, pass)
-		if err != nil {
-			return fmt.Errorf("could not parse key with passphrase: %w", err)
-		}
-	} else if err != nil {
-		return fmt.Errorf("could not parse key: %w", err)
-	}
-
-	ed25519Key, ok := key.(*ed25519.PrivateKey)
-	if !ok {
-		return unsupportedKeyTypeError(key)
-	}
-
-	// Determine which phrase types are needed by the requested derivations.
-	// Only generate and print the phrases that feed into the requested outputs.
-	// Bitcoin derives from both 12-word and 24-word; Nostr also uses both.
-	// All other crypto chains (eth, zec, sol, tron) derive from 24-word only.
-	needs12Word := deriveNostr || deriveBtc
-	needs24Word := deriveBtc || deriveEth || deriveZec || deriveSol || deriveTron || deriveNostr
-
-	var mnemonic12 string
-	if needs12Word {
-		mnemonic12, err = seedify.ToMnemonicWithLength(ed25519Key, 12, seedPassphrase, false, 0) //nolint:mnd
-		if err != nil {
-			return fmt.Errorf("could not generate 12-word mnemonic: %w", err)
-		}
-	}
-
-	var mnemonic24 string
-	if needs24Word {
-		mnemonic24, err = seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
-		if err != nil {
-			return fmt.Errorf("could not generate 24-word mnemonic: %w", err)
-		}
-	}
-
-	// Polyseed is only required for Monero derivation.
-	type polyseedEntry struct {
-		year     int
-		month    time.Month
-		mnemonic string
-	}
-	var polyseeds []polyseedEntry
-	if deriveXmr {
-		years, yearErr := getPolyseedYears()
-		if yearErr != nil {
-			return fmt.Errorf("invalid --polyseed-year: %w", yearErr)
-		}
-		month, monthErr := getPolyseedMonth()
-		if monthErr != nil {
-			return fmt.Errorf("invalid --polyseed-month: %w", monthErr)
-		}
-		polyseeds = make([]polyseedEntry, 0, len(years))
-		for _, year := range years {
-			m, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(year, month)) //nolint:mnd
-			if mnErr != nil {
-				return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", year, int(month), mnErr)
-			}
-			polyseeds = append(polyseeds, polyseedEntry{year: year, month: month, mnemonic: m})
-		}
-	}
-
-	// Print only the phrase blocks relevant to the requested derivations.
-	if needs12Word {
-		fmt.Print("\n\n")
-		printPEMPhrase("12-WORD SEED PHRASE", mnemonic12)
-	}
-	for _, ps := range polyseeds {
-		fmt.Print("\n\n")
-		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(ps.month), ps.year), ps.mnemonic)
-	}
-	if needs24Word {
-		fmt.Print("\n\n")
-		printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
-	}
-	fmt.Print("\n\n")
-
-	// Output requested derivations only
-	hasDerivations := deriveNostr || deriveBtc || deriveEth || deriveZec || deriveSol || deriveTron || deriveXmr
-	if !hasDerivations {
-		return nil
-	}
-
-	// Monero from 16-word polyseed (one set of addresses per year)
-	if deriveXmr {
-		for _, ps := range polyseeds {
-			xmrKeys, xmrErr := seedify.DeriveMoneroKeys(ps.mnemonic, 9) //nolint:mnd
-			if xmrErr != nil {
-				return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", ps.year, int(ps.month), xmrErr)
-			}
-			fmt.Printf("[monero addresses from 16 word polyseed (%d-%02d)]\n", ps.year, int(ps.month))
-			fmt.Println()
-			fmt.Printf("%s (primary address)\n", xmrKeys.PrimaryAddress)
-			for i, subaddr := range xmrKeys.Subaddresses {
-				fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, i+1)
-			}
-			fmt.Println()
-		}
-	}
-
-	// Nostr keys from 12 and 24 word
-	if deriveNostr {
-		for _, m := range []struct {
-			mnemonic string
-			count    int
-		}{
-			{mnemonic12, 12},
-			{mnemonic24, 24},
-		} {
-			nostrKeys, err := seedify.DeriveNostrKeysWithHex(m.mnemonic, "")
-			if err != nil {
-				return fmt.Errorf("failed to derive Nostr keys from %d-word mnemonic: %w", m.count, err)
-			}
-			fmt.Printf("[nostr keys from %d word seed]\n", m.count)
-			fmt.Println()
-			fmt.Printf("%s (nostr public key aka \"nostr user\")\n", nostrKeys.Npub)
-			fmt.Printf("└─ %s (hex)\n", nostrKeys.PubKeyHex)
-			fmt.Printf("%s (nostr secret key aka \"nostr pass\")\n", nostrKeys.Nsec)
-			fmt.Printf("└─ %s (hex)\n", nostrKeys.PrivKeyHex)
-			fmt.Println()
-		}
-	}
-
-	// Bitcoin from 12 and 24 word
-	if deriveBtc {
-		if err := displayBitcoinOutput(mnemonic12, 12); err != nil { //nolint:mnd
-			return err
-		}
-		if err := displayBitcoinOutput(mnemonic24, 24); err != nil { //nolint:mnd
-			return err
-		}
-	}
-
-	// Ethereum, Solana, Tron, and EVM chains from 24 word
-	if deriveEth {
-		ethAddr, err := seedify.DeriveEthereumAddress(mnemonic24, "")
-		if err != nil {
-			return fmt.Errorf("failed to derive Ethereum address from 24-word seed: %w", err)
-		}
-		fmt.Printf("[ethereum address from 24 word seed]\n")
-		fmt.Println()
-		fmt.Println(ethAddr)
-		fmt.Println()
-
-		for _, name := range []string{"arbitrum", "avalanche", "base", "bnbchain", "cronos", "optimism", "polygon"} {
-			fmt.Printf("[%s address from 24 word seed]\n", name)
-			fmt.Println()
-			fmt.Println(ethAddr)
-			fmt.Println()
-		}
-	}
-	if deriveZec {
-		zcashAddr, err := seedify.DeriveZcashAddress(mnemonic24, "")
-		if err != nil {
-			return fmt.Errorf("failed to derive Zcash address from 24-word seed: %w", err)
-		}
-		fmt.Printf("[zcash address from 24 word seed]\n")
-		fmt.Println()
-		fmt.Println(zcashAddr)
-		fmt.Println()
-	}
-	if deriveSol {
-		solAddr, err := seedify.DeriveSolanaAddress(mnemonic24, "")
-		if err != nil {
-			return fmt.Errorf("failed to derive Solana address from 24-word seed: %w", err)
-		}
-		fmt.Printf("[solana address from 24 word seed]\n")
-		fmt.Println()
-		fmt.Println(solAddr)
-		fmt.Println()
-	}
-	if deriveTron {
-		tronAddr, err := seedify.DeriveTronAddress(mnemonic24, "")
-		if err != nil {
-			return fmt.Errorf("failed to derive Tron address from 24-word seed: %w", err)
-		}
-		fmt.Printf("[tron address from 24 word seed]\n")
-		fmt.Println()
-		fmt.Println(tronAddr)
-		fmt.Println()
-	}
 
 	return nil
 }
@@ -1720,7 +1687,7 @@ func readPassword(msg string) ([]byte, error) {
 // When deriveNostr is true, it derives Nostr keys directly from the SSH key (not from seed phrases).
 // When showBrave is true, it also displays the brave 24-word seed phrase at the end.
 // Crypto address flags (deriveBtc, deriveEth, deriveSol, deriveTron, deriveXmr) control which addresses to derive.
-func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase string, deriveNostr bool, showBrave bool, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr bool) error {
+func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase string, deriveNostr bool, showBrave bool, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy bool) error {
 	// Parse the key once
 	f, err := openFileOrStdin(keyPath)
 	if err != nil {
@@ -1766,27 +1733,56 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 		return err
 	}
 
-	// Resolve polyseed years and month once before the loop
-	years, err := getPolyseedYears()
-	if err != nil {
-		return fmt.Errorf("invalid --polyseed-year: %w", err)
+	// Derive and display Tor v3 onion address (derived directly from SSH key).
+	onionKeys, onionErr := seedify.DeriveOnionServiceKeys(ed25519Key)
+	if onionErr != nil {
+		return fmt.Errorf("could not derive Tor v3 hidden service keys: %w", onionErr)
 	}
-	month, err := getPolyseedMonth()
-	if err != nil {
-		return fmt.Errorf("invalid --polyseed-month: %w", err)
+	fmt.Printf("\n-----BEGIN TOR ONION ADDRESS-----\n%s\n-----END TOR ONION ADDRESS-----\n", onionKeys.OnionAddress)
+
+	// Derive and display I2P b32 address (derived directly from SSH key).
+	i2pKeys, i2pErr := seedify.DeriveI2PDestinationKeys(ed25519Key)
+	if i2pErr != nil {
+		return fmt.Errorf("could not derive I2P destination keys: %w", i2pErr)
+	}
+	fmt.Printf("\n-----BEGIN I2P DESTINATION-----\n")
+	fmt.Printf("B32 Address  : %s\n", i2pKeys.B32Address)
+	fmt.Printf("X25519 PrivKey (hex): %x\n", i2pKeys.X25519PrivKey)
+	fmt.Printf("Ed25519 Seed  (hex): %x\n", i2pKeys.Ed25519Seed)
+	fmt.Printf("-----END I2P DESTINATION-----\n")
+
+	// Resolve polyseed iteration list once before the word-count loop.
+	// --all-polyseeds overrides --polyseed-year / --polyseed-month.
+	var polyseedSlots []yearMonth
+	if polyseedAll {
+		polyseedSlots = allPolyseedMonths()
+	} else {
+		years, yErr := getPolyseedYears()
+		if yErr != nil {
+			return fmt.Errorf("invalid --polyseed-year: %w", yErr)
+		}
+		month, mErr := getPolyseedMonth()
+		if mErr != nil {
+			return fmt.Errorf("invalid --polyseed-month: %w", mErr)
+		}
+		for _, y := range years {
+			polyseedSlots = append(polyseedSlots, yearMonth{year: y, month: month})
+		}
 	}
 
 	// Generate and display outputs for each word count
 	for i, count := range wordCounts {
-		// For 16-word polyseed, generate one mnemonic per year
+		// For 16-word polyseed, generate one mnemonic per (year, month) slot.
+		// The 25-word legacy seed is year-independent (derived directly from the
+		// SSH key), so it is printed once after all polyseed slots.
 		if count == 16 { //nolint:mnd,nestif
-			for _, year := range years {
-				mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(year, month)) //nolint:mnd
+			for _, slot := range polyseedSlots {
+				mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(slot.year, slot.month)) //nolint:mnd
 				if mnErr != nil {
-					return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", year, int(month), mnErr)
+					return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
 				}
 
-				fmt.Printf("[16 word seed phrase (%d-%02d)]\n", year, int(month))
+				fmt.Printf("[16 word seed phrase (%d-%02d)]\n", slot.year, int(slot.month))
 				fmt.Println()
 				fmt.Println(mnemonic)
 				fmt.Println()
@@ -1794,10 +1790,10 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 				if deriveXmr {
 					xmrKeys, xmrErr := seedify.DeriveMoneroKeys(mnemonic, 9) //nolint:mnd
 					if xmrErr != nil {
-						return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", year, int(month), xmrErr)
+						return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", slot.year, int(slot.month), xmrErr)
 					}
 
-					fmt.Printf("[monero addresses from 16 word polyseed (%d-%02d)]\n", year, int(month))
+					fmt.Printf("[monero addresses from 16 word polyseed (%d-%02d)]\n", slot.year, int(slot.month))
 					fmt.Println()
 					fmt.Printf("%s (primary address)\n", xmrKeys.PrimaryAddress)
 					for j, subaddr := range xmrKeys.Subaddresses {
@@ -1805,6 +1801,32 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					}
 					fmt.Println()
 				}
+			}
+
+			// 25-word legacy seed — year-independent, printed once after all polyseed blocks.
+			if deriveXmrLegacy {
+				legacySeed, legacyErr := seedify.ToMoneroLegacySeed(ed25519Key, seedPassphrase)
+				if legacyErr != nil {
+					return fmt.Errorf("failed to derive Monero legacy seed: %w", legacyErr)
+				}
+
+				fmt.Println("[25 word monero legacy seed]")
+				fmt.Println()
+				fmt.Println(legacySeed)
+				fmt.Println()
+
+				legacyKeys, legacyKErr := seedify.DeriveMoneroKeysFromLegacySeed(legacySeed, 9) //nolint:mnd
+				if legacyKErr != nil {
+					return fmt.Errorf("failed to derive Monero keys from legacy seed: %w", legacyKErr)
+				}
+
+				fmt.Println("[monero addresses from 25 word legacy seed]")
+				fmt.Println()
+				fmt.Printf("%s (primary address)\n", legacyKeys.PrimaryAddress)
+				for j, subaddr := range legacyKeys.Subaddresses {
+					fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
+				}
+				fmt.Println()
 			}
 		} else {
 			mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, count, seedPassphrase, false, 0)
