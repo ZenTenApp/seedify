@@ -84,6 +84,7 @@ var (
 	deriveKeyToRSA           bool
 	deriveKeyToDKIM          bool
 	deriveKeyToOnion         bool
+	deriveKeyToI2P           bool
 	deriveKeyPKCS8           bool
 	deriveKeyToPGP           bool
 	deriveKeyPGPName         string
@@ -174,6 +175,11 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				return errors.New("--to-onion cannot be combined with --to-rsa, --to-dkim, or --to-pgp")
 			}
 
+			// --to-i2p is mutually exclusive with all other derivation modes.
+			if deriveKeyToI2P && (deriveKeyToRSA || deriveKeyToDKIM || deriveKeyToPGP || deriveKeyToOnion) {
+				return errors.New("--to-i2p cannot be combined with --to-rsa, --to-dkim, --to-pgp, or --to-onion")
+			}
+
 			// --pgp-name and --pgp-email are both required when --to-pgp is set.
 			if deriveKeyToPGP && deriveKeyPGPName == "" {
 				return errors.New("--pgp-name is required with --to-pgp")
@@ -185,6 +191,11 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			// Handle --to-onion: derive a Tor v3 hidden service identity from the Ed25519 key.
 			if deriveKeyToOnion {
 				return runDeriveOnionKey(keyPath)
+			}
+
+			// Handle --to-i2p: derive an I2P Destination from the Ed25519 key.
+			if deriveKeyToI2P {
+				return runDeriveI2PKey(keyPath)
 			}
 
 			// Handle --to-rsa: derive an RSA key from the Ed25519 key and write to disk (or stdout).
@@ -517,6 +528,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToRSA, "to-rsa", false, "Derive an RSA key from the input Ed25519 key and write it to --output")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToDKIM, "to-dkim", false, "Derive a DKIM RSA keypair from the input Ed25519 key; when --dkim-domain is set, writes config/dkim/<domain>/<selector>.private and .public automatically")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToOnion, "to-onion", false, "Derive a Tor v3 hidden service identity from the input Ed25519 key; use --output <dir> to write the Tor key files")
+	rootCmd.PersistentFlags().BoolVar(&deriveKeyToI2P, "to-i2p", false, "Derive an I2P Destination (Ed25519 signing + X25519 encryption) from the input Ed25519 key; use --output <dir> to write the keys.dat file")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyPKCS8, "openssl-compatible", false, "Write an encrypted PKCS#8 PEM file instead of OpenSSH format (used with --to-rsa; compatible with openssl pkey -check)")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToPGP, "to-pgp", false, "Derive an OpenPGP RSA keypair and write an ASCII-armored secret key (.asc) to --output")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyPGPName, "pgp-name", "", "Full name for the OpenPGP UID, e.g. Alice (used with --to-pgp)")
@@ -937,6 +949,85 @@ func runDeriveOnionKey(keyPath string) error {
 	fmt.Fprintf(os.Stderr, "  %s\n", secretKeyPath)
 	fmt.Fprintf(os.Stderr, "  %s\n", publicKeyPath)
 	fmt.Fprintf(os.Stderr, "  %s\n", hostnamePath)
+
+	return nil
+}
+
+// runDeriveI2PKey handles --to-i2p: derives an I2P Destination (Ed25519 signing
+// key + X25519 encryption key) from the source Ed25519 key and either writes
+// the keys.dat file to a directory (when --output <dir> is given) or prints
+// only the .b32.i2p address to stdout.
+//
+// When --output is set the following file is written:
+//
+//	<dir>/keys.dat  (391 + 64 bytes, permissions 0600)
+//
+// keys.dat is the private-key file format used by i2pd and Java I2P:
+//
+//	Destination bytes (public, 391 B) || X25519 private scalar (32 B) || Ed25519 seed (32 B)
+//
+// Point i2pd at the directory with:
+//
+//	[yourservice]
+//	type = server
+//	keys = keys.dat
+func runDeriveI2PKey(keyPath string) error {
+	f, err := openFileOrStdin(keyPath)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	bts, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+
+	key, err := parsePrivateKey(bts, nil)
+	if err != nil && isPasswordError(err) {
+		pass, passErr := askKeyPassphrase(keyPath)
+		if passErr != nil {
+			return passErr
+		}
+		key, err = parsePrivateKey(bts, pass)
+		if err != nil {
+			return fmt.Errorf("could not parse key with passphrase: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("could not parse key: %w", err)
+	}
+
+	ed25519Key, ok := key.(*ed25519.PrivateKey)
+	if !ok {
+		return unsupportedKeyTypeError(key)
+	}
+
+	i2pKeys, deriveErr := seedify.DeriveI2PDestinationKeys(ed25519Key)
+	if deriveErr != nil {
+		return fmt.Errorf("could not derive I2P destination keys: %w", deriveErr)
+	}
+
+	// When no --output directory is given, just print the .b32.i2p address.
+	if deriveKeyOutput == "" {
+		fmt.Println(i2pKeys.B32Address)
+		return nil
+	}
+
+	// Create the output directory with restrictive permissions (owner only).
+	if mkdirErr := os.MkdirAll(deriveKeyOutput, 0o700); mkdirErr != nil { //nolint:mnd
+		return fmt.Errorf("could not create output directory %s: %w", deriveKeyOutput, mkdirErr)
+	}
+
+	keysPath := filepath.Join(deriveKeyOutput, "keys.dat")
+
+	if writeErr := os.WriteFile(keysPath, i2pKeys.PrivateKeyFile, 0o600); writeErr != nil { //nolint:mnd
+		return fmt.Errorf("could not write %s: %w", keysPath, writeErr)
+	}
+
+	fmt.Fprintf(os.Stderr, "\nWARNING: The derived I2P key is cryptographically linked to its source key.\n")
+	fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
+	fmt.Fprintf(os.Stderr, "B32 address: %s\n", i2pKeys.B32Address)
+	fmt.Fprintf(os.Stderr, "File written to: %s\n", keysPath)
 
 	return nil
 }
@@ -1861,6 +1952,20 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 	if err := printSSHKeyPair(ed25519Key, bts); err != nil {
 		return err
 	}
+
+	// Derive and display Tor v3 onion address (derived directly from SSH key).
+	onionKeys, onionErr := seedify.DeriveOnionServiceKeys(ed25519Key)
+	if onionErr != nil {
+		return fmt.Errorf("could not derive Tor v3 hidden service keys: %w", onionErr)
+	}
+	fmt.Printf("\n-----BEGIN TOR ONION ADDRESS-----\n%s\n-----END TOR ONION ADDRESS-----\n", onionKeys.OnionAddress)
+
+	// Derive and display I2P b32 address (derived directly from SSH key).
+	i2pKeys, i2pErr := seedify.DeriveI2PDestinationKeys(ed25519Key)
+	if i2pErr != nil {
+		return fmt.Errorf("could not derive I2P destination keys: %w", i2pErr)
+	}
+	fmt.Printf("\n-----BEGIN I2P B32 ADDRESS-----\n%s\n-----END I2P B32 ADDRESS-----\n", i2pKeys.B32Address)
 
 	// Resolve polyseed iteration list once before the word-count loop.
 	// --all-polyseeds overrides --polyseed-year / --polyseed-month.
