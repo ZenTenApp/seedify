@@ -3472,11 +3472,11 @@ const i2pCryptoTypeX25519 = uint16(4)
 
 // i2pUint16HighByteShift is the right-shift used to extract the high byte of a
 // big-endian uint16 type field in an I2P structure (1 byte = 8 bits).
-const i2pUint16HighByteShift = bitsPerByte
+const i2pUint16HighByteShift = 8
 
 // i2pPrivKeyComponentSize is the size in bytes of each private-key component
 // (X25519 scalar and Ed25519 seed) appended to the keys.dat Destination file.
-const i2pPrivKeyComponentSize = ed25519SeedSize
+const i2pPrivKeyComponentSize = 32
 
 // I2PDestinationKeys holds all material needed to deploy or advertise an
 // I2P Destination derived from an Ed25519 SSH key.

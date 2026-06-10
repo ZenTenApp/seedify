@@ -1005,9 +1005,11 @@ func runDeriveI2PKey(keyPath string) error {
 		return fmt.Errorf("could not derive I2P destination keys: %w", deriveErr)
 	}
 
-	// When no --output directory is given, just print the .b32.i2p address.
+	// When no --output directory is given, print the address and private keys.
 	if deriveKeyOutput == "" {
-		fmt.Println(i2pKeys.B32Address)
+		fmt.Printf("B32 Address  : %s\n", i2pKeys.B32Address)
+		fmt.Printf("X25519 PrivKey (hex): %x\n", i2pKeys.X25519PrivKey)
+		fmt.Printf("Ed25519 Seed  (hex): %x\n", i2pKeys.Ed25519Seed)
 		return nil
 	}
 
@@ -1743,7 +1745,11 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 	if i2pErr != nil {
 		return fmt.Errorf("could not derive I2P destination keys: %w", i2pErr)
 	}
-	fmt.Printf("\n-----BEGIN I2P B32 ADDRESS-----\n%s\n-----END I2P B32 ADDRESS-----\n", i2pKeys.B32Address)
+	fmt.Printf("\n-----BEGIN I2P DESTINATION-----\n")
+	fmt.Printf("B32 Address  : %s\n", i2pKeys.B32Address)
+	fmt.Printf("X25519 PrivKey (hex): %x\n", i2pKeys.X25519PrivKey)
+	fmt.Printf("Ed25519 Seed  (hex): %x\n", i2pKeys.Ed25519Seed)
+	fmt.Printf("-----END I2P DESTINATION-----\n")
 
 	// Resolve polyseed iteration list once before the word-count loop.
 	// --all-polyseeds overrides --polyseed-year / --polyseed-month.
