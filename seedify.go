@@ -22,10 +22,10 @@ import (
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/binary"
-	"hash/crc32"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math"
 	"math/big"
@@ -1690,8 +1690,8 @@ func moneroLegacyBytesToWords(keyBytes []byte) ([]string, error) {
 		return nil, fmt.Errorf("monero legacy seed: expected 32 bytes, got %d", len(keyBytes))
 	}
 	const (
-		n        = 1626 // wordlist length
-		nGroups  = 8   // 32 bytes / 4 bytes per group
+		n       = 1626 // wordlist length
+		nGroups = 8    // 32 bytes / 4 bytes per group
 	)
 	words := make([]string, 0, 25) //nolint:mnd
 	for i := range nGroups {
@@ -3555,11 +3555,11 @@ func DeriveI2PDestinationKeys(key *ed25519.PrivateKey) (*I2PDestinationKeys, err
 	//   [389..390] = crypto  key type  = 0x00 0x04 (X25519)
 
 	const (
-		cryptoKeySize = 32  // X25519
-		signKeySize   = 32  // Ed25519
-		paddingSize   = i2pDestTotalKeyBytes - cryptoKeySize - signKeySize // 320
+		cryptoKeySize      = 32                                                 // X25519
+		signKeySize        = 32                                                 // Ed25519
+		paddingSize        = i2pDestTotalKeyBytes - cryptoKeySize - signKeySize // 320
 		keyCertPayloadSize = 4
-		keyCertTotalSize   = 1 + 2 + keyCertPayloadSize // type(1) + len(2) + payload(4) = 7
+		keyCertTotalSize   = 1 + 2 + keyCertPayloadSize              // type(1) + len(2) + payload(4) = 7
 		destSize           = i2pDestTotalKeyBytes + keyCertTotalSize // 391
 	)
 

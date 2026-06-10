@@ -616,8 +616,6 @@ func allPolyseedMonths() []yearMonth {
 	return out
 }
 
-
-
 // runDeriveKey is the handler for --to-rsa.
 // It parses the source Ed25519 key, derives an RSA key, prompts for a
 // passphrase, and writes the result as either:
