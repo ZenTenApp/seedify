@@ -1410,6 +1410,14 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	fmt.Print("\n\n")
 	printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
 
+	// 3b. Monero 25-word legacy seed (Electrum-style)
+	moneroLegacySeed, err := seedify.ToMoneroLegacySeed(ed25519Key, seedPassphrase)
+	if err != nil {
+		return fmt.Errorf("could not generate Monero legacy seed: %w", err)
+	}
+	fmt.Print("\n\n")
+	printPEMPhrase("25-WORD MONERO LEGACY SEED", moneroLegacySeed)
+
 	// 4. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
 	nostrKeys, err := seedify.DeriveNostrKeysWithHex(mnemonic24, "")
 	if err != nil {
