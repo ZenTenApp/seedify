@@ -1663,16 +1663,19 @@ func DeriveMoneroKeys(mnemonic string, numSubaddresses int) (*MoneroKeys, error)
 // 25-word Monero legacy mnemonic. It concatenates the first 3 characters of
 // each of the 24 data words, computes CRC32 (IEEE), and takes the result mod 24.
 func moneroLegacyChecksumIndex(words []string) int {
-	const prefixLen = 3
-	buf := make([]byte, 0, 24*prefixLen)
-	for _, w := range words[:24] {
+	const (
+		prefixLen      = 3
+		moneroDataWords = 24
+	)
+	buf := make([]byte, 0, moneroDataWords*prefixLen)
+	for _, w := range words[:moneroDataWords] {
 		if len(w) >= prefixLen {
 			buf = append(buf, w[:prefixLen]...)
 		} else {
 			buf = append(buf, w...)
 		}
 	}
-	return int(crc32.ChecksumIEEE(buf) % 24) //nolint:mnd
+	return int(crc32.ChecksumIEEE(buf) % moneroDataWords)
 }
 
 // moneroLegacyBytesToWords encodes 32 raw key bytes into a 25-word Monero
