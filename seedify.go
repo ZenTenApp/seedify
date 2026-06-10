@@ -1664,7 +1664,7 @@ func DeriveMoneroKeys(mnemonic string, numSubaddresses int) (*MoneroKeys, error)
 // each of the 24 data words, computes CRC32 (IEEE), and takes the result mod 24.
 func moneroLegacyChecksumIndex(words []string) int {
 	const (
-		prefixLen      = 3
+		prefixLen       = 3
 		moneroDataWords = 24
 	)
 	buf := make([]byte, 0, moneroDataWords*prefixLen)
