@@ -1662,10 +1662,10 @@ func DeriveMoneroKeys(mnemonic string, numSubaddresses int) (*MoneroKeys, error)
 // moneroLegacyChecksumIndex computes the CRC32-based checksum word index for a
 // 25-word Monero legacy mnemonic. It concatenates the first 3 characters of
 // each of the 24 data words, computes CRC32 (IEEE), and takes the result mod 24.
-func moneroLegacyChecksumIndex(words []string) int { //nolint:mnd
+func moneroLegacyChecksumIndex(words []string) int {
 	const prefixLen = 3
-	buf := make([]byte, 0, 24*prefixLen) //nolint:mnd
-	for _, w := range words[:24] {       //nolint:mnd
+	buf := make([]byte, 0, 24*prefixLen)
+	for _, w := range words[:24] {
 		if len(w) >= prefixLen {
 			buf = append(buf, w[:prefixLen]...)
 		} else {
@@ -1695,7 +1695,7 @@ func moneroLegacyBytesToWords(keyBytes []byte) ([]string, error) {
 	)
 	words := make([]string, 0, 25) //nolint:mnd
 	for i := range nGroups {
-		v := binary.LittleEndian.Uint32(keyBytes[4*i : 4*i+4]) //nolint:mnd
+		v := binary.LittleEndian.Uint32(keyBytes[4*i : 4*i+4])
 		w1 := v % n
 		w2 := (v/n + w1) % n
 		w3 := (v/n/n + w2) % n
@@ -3470,6 +3470,14 @@ const i2pSigTypeEd25519 = uint16(7)
 // (type 4, big-endian uint16).
 const i2pCryptoTypeX25519 = uint16(4)
 
+// i2pUint16HighByteShift is the right-shift used to extract the high byte of a
+// big-endian uint16 type field in an I2P structure (1 byte = 8 bits).
+const i2pUint16HighByteShift = bitsPerByte
+
+// i2pPrivKeyComponentSize is the size in bytes of each private-key component
+// (X25519 scalar and Ed25519 seed) appended to the keys.dat Destination file.
+const i2pPrivKeyComponentSize = ed25519SeedSize
+
 // I2PDestinationKeys holds all material needed to deploy or advertise an
 // I2P Destination derived from an Ed25519 SSH key.
 type I2PDestinationKeys struct {
@@ -3488,6 +3496,14 @@ type I2PDestinationKeys struct {
 	//   X25519 private key (32 bytes, little-endian)
 	//   Ed25519 private key seed (32 bytes)
 	PrivateKeyFile []byte
+
+	// X25519PrivKey is the 32-byte clamped X25519 private scalar used for
+	// ElGamal / ECIES-X25519 decryption of incoming garlic messages.
+	X25519PrivKey []byte
+
+	// Ed25519Seed is the 32-byte seed for the Ed25519 signing key used to
+	// sign lease sets published to the I2P NetDB.
+	Ed25519Seed []byte
 }
 
 // DeriveI2PDestinationKeys deterministically derives an I2P Destination
@@ -3578,11 +3594,11 @@ func DeriveI2PDestinationKeys(key *ed25519.PrivateKey) (*I2PDestinationKeys, err
 	destBytes[offset+1] = 0x04
 	offset += 2
 	// Signing key type = 7 (EdDSA_SHA512_Ed25519), big-endian.
-	destBytes[offset] = byte(i2pSigTypeEd25519 >> 8)
+	destBytes[offset] = byte(i2pSigTypeEd25519 >> i2pUint16HighByteShift)
 	destBytes[offset+1] = byte(i2pSigTypeEd25519)
 	offset += 2
 	// Crypto key type = 4 (X25519), big-endian.
-	destBytes[offset] = byte(i2pCryptoTypeX25519 >> 8)
+	destBytes[offset] = byte(i2pCryptoTypeX25519 >> i2pUint16HighByteShift)
 	destBytes[offset+1] = byte(i2pCryptoTypeX25519)
 
 	// --- b32 address ---------------------------------------------------------
@@ -3595,7 +3611,7 @@ func DeriveI2PDestinationKeys(key *ed25519.PrivateKey) (*I2PDestinationKeys, err
 
 	// --- Private key file (i2pd keys.dat / destination.dat) ------------------
 	// Format: Destination bytes || X25519 private scalar (32 B) || Ed25519 seed (32 B)
-	privFile := make([]byte, 0, destSize+32+32)
+	privFile := make([]byte, 0, destSize+i2pPrivKeyComponentSize+i2pPrivKeyComponentSize)
 	privFile = append(privFile, destBytes...)
 	privFile = append(privFile, encPrivScalar[:]...)
 	privFile = append(privFile, signSubSeed[:]...)
@@ -3604,5 +3620,7 @@ func DeriveI2PDestinationKeys(key *ed25519.PrivateKey) (*I2PDestinationKeys, err
 		B32Address:       b32Addr,
 		DestinationBytes: destBytes,
 		PrivateKeyFile:   privFile,
+		X25519PrivKey:    encPrivScalar[:],
+		Ed25519Seed:      signSubSeed[:],
 	}, nil
 }

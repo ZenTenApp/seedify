@@ -298,7 +298,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 						wc = append(wc, 24) //nolint:mnd
 					}
 					if len(wc) == 0 {
-						wc = []int{16} //nolint:mnd
+						wc = []int{16}
 					}
 					err := generateUnifiedOutput(keyPath, wc, seedPassphrase,
 						nostr, false, bitcoin, ethereum, zcash, solana, tron, monero, moneroLegacy)
