@@ -835,6 +835,151 @@ func TestMoneroLegacySeedKnownVector(t *testing.T) {
 	is.Equal(v2Keys.PrimaryAddress, v2Address)
 }
 
+// TestDeriveBeldexKeysFromLegacySeed_ValidFormat verifies the primary address
+// starts with "bx" and is the correct length for a Beldex mainnet address.
+//
+// Beldex uses a 2-byte varint network prefix [0xD1, 0x01] (tag 209), making
+// the total encoded size 70 bytes → 97 base58 characters.
+func TestDeriveBeldexKeysFromLegacySeed_ValidFormat(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	keys, err := DeriveBeldexKeysFromLegacySeed(seed, 0)
+	is.NoErr(err)
+	is.True(strings.HasPrefix(keys.PrimaryAddress, "bx"))
+	is.Equal(len(keys.PrimaryAddress), 97) //nolint:mnd
+}
+
+// TestDeriveBeldexKeysFromLegacySeed_Subaddresses verifies that the requested
+// number of subaddresses is returned and that each one is distinct.
+func TestDeriveBeldexKeysFromLegacySeed_Subaddresses(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	const numSub = 3
+	seed, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	keys, err := DeriveBeldexKeysFromLegacySeed(seed, numSub)
+	is.NoErr(err)
+	is.Equal(len(keys.Subaddresses), numSub)
+
+	seen := make(map[string]struct{})
+	for _, sub := range keys.Subaddresses {
+		is.True(sub != "")
+		_, dup := seen[sub]
+		is.True(!dup)
+		seen[sub] = struct{}{}
+	}
+}
+
+// TestDeriveBeldexKeysFromLegacySeed_Deterministic verifies the same seed
+// always produces the same address.
+func TestDeriveBeldexKeysFromLegacySeed_Deterministic(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	keys1, err := DeriveBeldexKeysFromLegacySeed(seed, 2) //nolint:mnd
+	is.NoErr(err)
+	keys2, err := DeriveBeldexKeysFromLegacySeed(seed, 2) //nolint:mnd
+	is.NoErr(err)
+
+	is.Equal(keys1.PrimaryAddress, keys2.PrimaryAddress)
+	is.Equal(keys1.Subaddresses, keys2.Subaddresses)
+}
+
+// TestBeldexAddressDifferentFromMonero verifies that the same 25-word seed
+// produces different addresses for Beldex and Monero (different network prefixes).
+func TestBeldexAddressDifferentFromMonero(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	seed, err := ToMoneroLegacySeed(&key, "")
+	is.NoErr(err)
+
+	xmrKeys, err := DeriveMoneroKeysFromLegacySeed(seed, 0)
+	is.NoErr(err)
+
+	bdxKeys, err := DeriveBeldexKeysFromLegacySeed(seed, 0)
+	is.NoErr(err)
+
+	// Same underlying spend/view keys, different network encoding — addresses must differ.
+	is.True(xmrKeys.PrimaryAddress != bdxKeys.PrimaryAddress)
+	is.True(strings.HasPrefix(xmrKeys.PrimaryAddress, "4"))
+	is.True(strings.HasPrefix(bdxKeys.PrimaryAddress, "bx"))
+}
+
+// TestBeldexKnownVector verifies the primary address and view key against a
+// wallet generated with beldex-wallet-cli v7 using the English wordlist.
+//
+// CLI command used (beldex-wallet-cli v7.0.0-38e6f19fb):
+//
+//	./beldex-wallet-cli \
+//	  --offline \
+//	  --generate-new-wallet /tmp/test_wallet \
+//	  --password ""
+//
+// The address and view key were taken from the wallet output. The mnemonic is
+// the seed revealed by the CLI when prompted (Y).
+//
+//	Mnemonic:   looking tagged deity potato village september furnished ditch
+//	            menu suede joyous present faulty ringing unfit certain
+//	            fierce getting bobsled metro suture fazed unquoted venomous menu
+//	Address:    bxcxbubPdcmhr36gFzxKRxSByfxXfcqz5CzEgkjcAKZhCPDkdpd1Y7nYmTzT8vX8veQ4tW2HZ57K5hdzUtGcNerA13CnnYxpq
+//	View key:   d74c9efa3b232b02b71df2bd2eb5f1c449e7278e463a94c63df8fc361edf6c05
+func TestBeldexKnownVector(t *testing.T) {
+	is := is.New(t)
+
+	const seed = "looking tagged deity potato village september furnished ditch menu suede joyous present faulty ringing unfit certain fierce getting bobsled metro suture fazed unquoted venomous menu"
+	const wantAddress = "bxcxbubPdcmhr36gFzxKRxSByfxXfcqz5CzEgkjcAKZhCPDkdpd1Y7nYmTzT8vX8veQ4tW2HZ57K5hdzUtGcNerA13CnnYxpq"
+
+	keys, err := DeriveBeldexKeysFromLegacySeed(seed, 0)
+	is.NoErr(err)
+	is.Equal(keys.PrimaryAddress, wantAddress)
+}
+
+// TestBeldexKnownVector2 verifies the primary address against a wallet restored
+// with beldex-wallet-cli v7 using --restore-deterministic-wallet (English wordlist).
+//
+// CLI command used (beldex-wallet-cli v7.0.0-38e6f19fb):
+//
+//	./beldex-wallet-cli \
+//	  --offline \
+//	  --restore-deterministic-wallet \
+//	  --generate-new-wallet /tmp/test_wallet6 \
+//	  --electrum-seed "gifts boss lyrics diode wives skirting surfer unlikely rural neutral zigzags people hounded giving soothe females festival pylons awesome dullness mice inactive later lexicon inactive" \
+//	  --restore-height 0 \
+//	  --password ""
+//
+//	Mnemonic:   gifts boss lyrics diode wives skirting surfer unlikely rural neutral zigzags
+//	            people hounded giving soothe females festival pylons awesome dullness mice
+//	            inactive later lexicon inactive
+//	Address:    bxdNtMRGzQEEQfcQuc7TY74AJR1X5HbhUFHwp2yZose862mWTR62qapYWRwbj6ka6R8EWQ5hqG1yYPwdtB1UewRg2KiS5SF3K
+func TestBeldexKnownVector2(t *testing.T) {
+	is := is.New(t)
+
+	const seed = "gifts boss lyrics diode wives skirting surfer unlikely rural neutral zigzags people hounded giving soothe females festival pylons awesome dullness mice inactive later lexicon inactive"
+	const wantAddress = "bxdNtMRGzQEEQfcQuc7TY74AJR1X5HbhUFHwp2yZose862mWTR62qapYWRwbj6ka6R8EWQ5hqG1yYPwdtB1UewRg2KiS5SF3K"
+
+	keys, err := DeriveBeldexKeysFromLegacySeed(seed, 0)
+	is.NoErr(err)
+	is.Equal(keys.PrimaryAddress, wantAddress)
+}
+
 // TestDeriveBitcoinLegacyKeys_ValidFormat tests that DeriveBitcoinLegacyKeys produces valid address and WIF
 func TestDeriveBitcoinLegacyKeys_ValidFormat(t *testing.T) {
 	is := is.New(t)
