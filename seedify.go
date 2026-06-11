@@ -1536,29 +1536,8 @@ func DeriveMoneroAddress(mnemonic string) (string, error) {
 	spendPubKey := keyPair.SpendKeyPair().PublicKey().Bytes()
 	viewPubKey := keyPair.ViewKeyPair().PublicKey().Bytes()
 
-	// Construct the address bytes: prefix (1) + spend pubkey (32) + view pubkey (32) + checksum (4)
-	// Mainnet primary address prefix is 0x12
-	addrData := make([]byte, 65) //nolint:mnd // 1 + 32 + 32
-	addrData[0] = 0x12           // Mainnet primary address prefix
-	copy(addrData[1:33], spendPubKey)
-	copy(addrData[33:65], viewPubKey)
-
-	// Calculate checksum (first 4 bytes of Keccak256 hash)
-	checksum, err := utils.Keccak256Hash(addrData)
-	if err != nil {
-		return "", fmt.Errorf("failed to calculate checksum: %w", err)
-	}
-
-	// Append checksum to address data
-	fullAddr := append(addrData, checksum[:4]...)
-
-	// Encode using Monero's base58 encoding
-	encoded, err := utils.EncodeMoneroAddress(fullAddr)
-	if err != nil {
-		return "", fmt.Errorf("failed to encode address: %w", err)
-	}
-
-	return string(encoded), nil
+	// Build the Monero primary address using the standard 0x12 mainnet prefix.
+	return buildMoneroAddress(0x12, spendPubKey, viewPubKey) //nolint:mnd
 }
 
 // DeriveMoneroSubaddressAtIndex derives a Monero receiving subaddress at the given index.
@@ -1767,25 +1746,198 @@ func DeriveMoneroKeysFromLegacySeed(mnemonic string, numSubaddresses int) (*Mone
 	}, nil
 }
 
-// buildMoneroAddress constructs a Monero address from public keys and a prefix.
-func buildMoneroAddress(prefix byte, spendPubKey, viewPubKey []byte) (string, error) {
-	addrData := make([]byte, 65) //nolint:mnd // 1 + 32 + 32
-	addrData[0] = prefix
-	copy(addrData[1:33], spendPubKey)
-	copy(addrData[33:65], viewPubKey)
+// Beldex address network prefixes.
+//
+// Beldex is a Monero fork that uses CryptoNote-compatible key derivation with
+// distinct varint-encoded network tags.  A varint value > 127 requires two
+// bytes in the prefix: byte0 = (v & 0x7F) | 0x80, byte1 = v >> 7.
+const (
+	// beldexSubaddrPrefixByte is the single-byte mainnet subaddress tag (116 < 128).
+	beldexSubaddrPrefixByte = byte(116) //nolint:mnd
+)
+
+// beldexMainnetPrefix is the 2-byte varint encoding of Beldex mainnet tag 209 (0xd1).
+// varint(209): first byte = (209 & 0x7F) | 0x80 = 0xD1, second byte = 209 >> 7 = 0x01.
+var beldexMainnetPrefix = []byte{0xD1, 0x01} //nolint:mnd
+
+// deriveBeldexSubaddress derives a Beldex subaddress at (major, minor).
+// The derivation is identical to Monero's (same "SubAddr\x00" Hs prefix),
+// but the address is encoded with Beldex's single-byte subaddress prefix (0x74 = 116).
+func deriveBeldexSubaddress(viewSecretKey, spendPubKey []byte, major, minor uint32) (string, error) {
+	if major == 0 && minor == 0 {
+		return "", fmt.Errorf("(0,0) is the primary address, not a subaddress")
+	}
+
+	// m = Hs("SubAddr\x00" || view_secret || major_le || minor_le)
+	subaddrPrefix := []byte("SubAddr\x00")
+	majorBytes := make([]byte, 4) //nolint:mnd
+	minorBytes := make([]byte, 4) //nolint:mnd
+	binary.LittleEndian.PutUint32(majorBytes, major)
+	binary.LittleEndian.PutUint32(minorBytes, minor)
+
+	data := make([]byte, 0, len(subaddrPrefix)+32+8) //nolint:mnd
+	data = append(data, subaddrPrefix...)
+	data = append(data, viewSecretKey...)
+	data = append(data, majorBytes...)
+	data = append(data, minorBytes...)
+
+	hash, err := utils.Keccak256Hash(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash Beldex subaddress data: %w", err)
+	}
+	m := scReduce32(hash)
+
+	mScalar, err := edwards25519.NewScalar().SetCanonicalBytes(m)
+	if err != nil {
+		return "", fmt.Errorf("failed to create scalar m: %w", err)
+	}
+	mG := edwards25519.NewIdentityPoint().ScalarBaseMult(mScalar)
+
+	spendPubPoint, err := edwards25519.NewIdentityPoint().SetBytes(spendPubKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse spend public key: %w", err)
+	}
+	subSpendPub := edwards25519.NewIdentityPoint().Add(spendPubPoint, mG)
+
+	viewSecScalar, err := edwards25519.NewScalar().SetCanonicalBytes(viewSecretKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to create scalar from view secret: %w", err)
+	}
+	subViewPub := edwards25519.NewIdentityPoint().ScalarMult(viewSecScalar, subSpendPub)
+
+	// Beldex subaddress prefix is a single byte: 0x74 (116)
+	return buildCryptonoteAddress([]byte{beldexSubaddrPrefixByte}, subSpendPub.Bytes(), subViewPub.Bytes())
+}
+
+// DeriveBeldexKeysFromLegacySeed derives a Beldex primary address and subaddresses
+// from a 25-word Monero-compatible legacy mnemonic.
+//
+// The 25-word seed format is identical to Monero's Electrum-style seed (the
+// same format produced by ToMoneroLegacySeed), so no separate seed generation
+// step is needed for Beldex.  Only the address encoding differs: Beldex uses
+// a 2-byte varint prefix [0xD1, 0x01] (tag 209) for primary addresses and
+// single-byte prefix 0x74 (116) for subaddresses.
+//
+// Parameters:
+//   - mnemonic: A valid 25-word Monero/Beldex legacy mnemonic (space-separated)
+//   - numSubaddresses: Number of subaddresses to generate (0 for none)
+func DeriveBeldexKeysFromLegacySeed(mnemonic string, numSubaddresses int) (*MoneroKeys, error) {
+	seed, err := utils.NewSeedMnemonic(mnemonic, utils.English)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode mnemonic: %w", err)
+	}
+	keyPair := seed.FullKeyPair()
+	viewSecKey := keyPair.ViewKeyPair().PrivateKey().Bytes()
+	spendPubKey := keyPair.SpendKeyPair().PublicKey().Bytes()
+	viewPubKey := keyPair.ViewKeyPair().PublicKey().Bytes()
+
+	// Beldex mainnet primary address: 2-byte varint prefix [0xD1, 0x01] (tag 209).
+	primaryAddr, err := buildCryptonoteAddress(beldexMainnetPrefix, spendPubKey, viewPubKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Beldex primary address: %w", err)
+	}
+
+	subaddresses := make([]string, 0, numSubaddresses)
+	for i := uint32(1); i <= uint32(numSubaddresses); i++ { //nolint:gosec
+		subaddr, subErr := deriveBeldexSubaddress(viewSecKey, spendPubKey, 0, i)
+		if subErr != nil {
+			return nil, fmt.Errorf("failed to derive Beldex subaddress (0,%d): %w", i, subErr)
+		}
+		subaddresses = append(subaddresses, subaddr)
+	}
+
+	return &MoneroKeys{
+		PrimaryAddress: primaryAddr,
+		Subaddresses:   subaddresses,
+	}, nil
+}
+
+// moneroBase58PartialBlockSizes maps a partial block's byte count (0–8) to its
+// expected encoded character count under Monero's base58 scheme.
+//
+//nolint:mnd
+var moneroBase58PartialBlockSizes = [9]int{0, 2, 3, 5, 6, 7, 9, 10, 11}
+
+// moneroBase58Encode encodes rawBytes using Monero's base58 encoding scheme.
+// Monero base58 splits the input into 8-byte full blocks (each encoded to 11
+// base58 characters) and a trailing partial block whose encoded length is
+// determined by moneroBase58PartialBlockSizes.  Each block is left-padded with
+// '1' characters (the base58 zero symbol) to its expected width.
+//
+// This is a general-purpose encoder and works with any byte length, unlike the
+// go-monero library's EncodeMoneroAddress which only accepts 69 or 77 bytes.
+func moneroBase58Encode(rawBytes []byte) []byte {
+	const (
+		fullBlock        = 8  // bytes per full block
+		fullEncodedBlock = 11 // characters per full encoded block
+	)
+
+	n := len(rawBytes)
+	fullBlocks := n / fullBlock
+	remainder := n % fullBlock
+
+	outputSize := fullBlocks*fullEncodedBlock + moneroBase58PartialBlockSizes[remainder]
+	res := make([]byte, outputSize)
+
+	for i := range fullBlocks {
+		start := i * fullBlock
+		enc := []byte(base58.Encode(rawBytes[start : start+fullBlock]))
+		offset := i * fullEncodedBlock
+		pad := fullEncodedBlock - len(enc)
+		for j := range pad {
+			res[offset+j] = '1'
+		}
+		copy(res[offset+pad:], enc)
+	}
+
+	if remainder > 0 {
+		enc := []byte(base58.Encode(rawBytes[fullBlocks*fullBlock:]))
+		partialSize := moneroBase58PartialBlockSizes[remainder]
+		offset := fullBlocks * fullEncodedBlock
+		pad := partialSize - len(enc)
+		for j := range pad {
+			res[offset+j] = '1'
+		}
+		copy(res[offset+pad:], enc)
+	}
+
+	return res
+}
+
+// buildCryptonoteAddress constructs a CryptoNote-family address (Monero, Beldex,
+// and compatible forks) from an arbitrary-length prefix, a 32-byte spend public
+// key, and a 32-byte view public key.
+//
+// The address data layout is:
+//
+//	prefixBytes (1–N) | spendPubKey (32) | viewPubKey (32)
+//
+// A 4-byte Keccak-256 checksum is appended before Monero-style base58 encoding.
+// This replaces the previous buildMoneroAddress which assumed a single-byte
+// prefix and delegated to the go-monero library's size-restricted encoder.
+func buildCryptonoteAddress(prefixBytes, spendPubKey, viewPubKey []byte) (string, error) {
+	const (
+		pubKeySize  = 32
+		checksumLen = 4
+	)
+	addrData := make([]byte, len(prefixBytes)+pubKeySize+pubKeySize)
+	copy(addrData, prefixBytes)
+	copy(addrData[len(prefixBytes):], spendPubKey)
+	copy(addrData[len(prefixBytes)+pubKeySize:], viewPubKey)
 
 	checksum, err := utils.Keccak256Hash(addrData)
 	if err != nil {
-		return "", fmt.Errorf("failed to calculate checksum: %w", err)
+		return "", fmt.Errorf("failed to calculate address checksum: %w", err)
 	}
 
-	fullAddr := append(addrData, checksum[:4]...)
-	encoded, err := utils.EncodeMoneroAddress(fullAddr)
-	if err != nil {
-		return "", fmt.Errorf("failed to encode address: %w", err)
-	}
+	fullAddr := append(addrData, checksum[:checksumLen]...)
+	return string(moneroBase58Encode(fullAddr)), nil
+}
 
-	return string(encoded), nil
+// buildMoneroAddress constructs a Monero address from public keys and a single-byte prefix.
+// It delegates to buildCryptonoteAddress for the actual encoding.
+func buildMoneroAddress(prefix byte, spendPubKey, viewPubKey []byte) (string, error) {
+	return buildCryptonoteAddress([]byte{prefix}, spendPubKey, viewPubKey)
 }
 
 // deriveMoneroSubaddress derives a Monero subaddress at the given index.
