@@ -278,8 +278,8 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 					if err != nil {
 						return fmt.Errorf("invalid word counts: %w", err)
 					}
-				err = generateUnifiedOutput(keyPath, parsedCounts, seedPassphrase,
-					false, false, false, false, false, false, false, false, false, false)
+					err = generateUnifiedOutput(keyPath, parsedCounts, seedPassphrase,
+						false, false, false, false, false, false, false, false, false, false)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
 							return formatPasswordError(err)
@@ -301,8 +301,8 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 					if len(wc) == 0 {
 						wc = []int{16}
 					}
-				err := generateUnifiedOutput(keyPath, wc, seedPassphrase,
-					nostr, false, bitcoin, ethereum, zcash, solana, tron, monero, moneroLegacy, beldex)
+					err := generateUnifiedOutput(keyPath, wc, seedPassphrase,
+						nostr, false, bitcoin, ethereum, zcash, solana, tron, monero, moneroLegacy, beldex)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
 							return formatPasswordError(err)
@@ -708,8 +708,6 @@ func runDeriveKey(keyPath string) error {
 			return errors.New("aborted: use --output <path> to write the derived key to a file")
 		}
 
-		fmt.Fprintf(os.Stderr, "\nWARNING: The derived key is cryptographically linked to its source key.\n")
-		fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
 		fmt.Print(string(pemBytes))
 		return nil
 	}
@@ -719,8 +717,6 @@ func runDeriveKey(keyPath string) error {
 		return fmt.Errorf("could not write derived key to %s: %w", deriveKeyOutput, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nWARNING: The derived key is cryptographically linked to its source key.\n")
-	fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
 	fmt.Fprintf(os.Stderr, "Derived key written to: %s\n", deriveKeyOutput)
 
 	return nil
@@ -806,8 +802,6 @@ func runDeriveDKIMKey(keyPath string) error {
 			return fmt.Errorf("could not write DKIM public key to %s: %w", pubPath, writeErr)
 		}
 
-		fmt.Fprintf(os.Stderr, "\nWARNING: The derived DKIM key is cryptographically linked to its source key.\n")
-		fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
 		fmt.Fprintf(os.Stderr, "DKIM private key written to: %s\n", privPath)
 		fmt.Fprintf(os.Stderr, "DKIM public key written to:  %s\n", pubPath)
 
@@ -817,8 +811,6 @@ func runDeriveDKIMKey(keyPath string) error {
 			return fmt.Errorf("could not write DKIM private key to %s: %w", deriveKeyOutput, writeErr)
 		}
 
-		fmt.Fprintf(os.Stderr, "\nWARNING: The derived DKIM key is cryptographically linked to its source key.\n")
-		fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
 		fmt.Fprintf(os.Stderr, "DKIM private key written to: %s\n", deriveKeyOutput)
 
 	default:
@@ -831,8 +823,6 @@ func runDeriveDKIMKey(keyPath string) error {
 			return errors.New("aborted: use --output <path> or --dkim-domain <domain> to write the DKIM private key to a file")
 		}
 
-		fmt.Fprintf(os.Stderr, "\nWARNING: The derived DKIM key is cryptographically linked to its source key.\n")
-		fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
 		fmt.Print(string(dkimKeys.PrivateKeyPEM))
 	}
 
@@ -944,8 +934,6 @@ func runDeriveOnionKey(keyPath string) error {
 		return fmt.Errorf("could not write %s: %w", hostnamePath, writeErr)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nWARNING: The derived Tor key is cryptographically linked to its source key.\n")
-	fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
 	fmt.Fprintf(os.Stderr, "Onion address: %s\n", onionKeys.OnionAddress)
 	fmt.Fprintf(os.Stderr, "Files written to: %s\n", deriveKeyOutput)
 	fmt.Fprintf(os.Stderr, "  %s\n", secretKeyPath)
@@ -1028,8 +1016,6 @@ func runDeriveI2PKey(keyPath string) error {
 		return fmt.Errorf("could not write %s: %w", keysPath, writeErr)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nWARNING: The derived I2P key is cryptographically linked to its source key.\n")
-	fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
 	fmt.Fprintf(os.Stderr, "B32 address: %s\n", i2pKeys.B32Address)
 	fmt.Fprintf(os.Stderr, "File written to: %s\n", keysPath)
 
@@ -1197,8 +1183,6 @@ func runDerivePGPKey(keyPath string) error {
 			return errors.New("aborted: use --output <path> to write the PGP key to a file")
 		}
 
-		fmt.Fprintf(os.Stderr, "\nWARNING: The derived PGP key is cryptographically linked to its source key.\n")
-		fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
 		fmt.Print(string(ascBytes))
 		return nil
 	}
@@ -1207,8 +1191,6 @@ func runDerivePGPKey(keyPath string) error {
 		return fmt.Errorf("could not write PGP key to %s: %w", deriveKeyOutput, writeErr)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nWARNING: The derived PGP key is cryptographically linked to its source key.\n")
-	fmt.Fprintf(os.Stderr, "         Compromising either key compromises both.\n\n")
 	fmt.Fprintf(os.Stderr, "PGP key written to: %s\n", deriveKeyOutput)
 	fmt.Fprintf(os.Stderr, "Import with: gpg --import %s\n", deriveKeyOutput)
 
@@ -1753,7 +1735,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 	fmt.Printf("B32 Address  : %s\n", i2pKeys.B32Address)
 	fmt.Printf("X25519 PrivKey (hex): %x\n", i2pKeys.X25519PrivKey)
 	fmt.Printf("Ed25519 Seed  (hex): %x\n", i2pKeys.Ed25519Seed)
-	fmt.Printf("-----END I2P DESTINATION-----\n")
+	fmt.Printf("-----END I2P DESTINATION-----\n\n")
 
 	// Resolve polyseed iteration list once before the word-count loop.
 	// --all-polyseeds overrides --polyseed-year / --polyseed-month.
