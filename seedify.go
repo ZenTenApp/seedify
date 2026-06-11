@@ -1699,11 +1699,38 @@ func moneroLegacyBytesToWords(keyBytes []byte) ([]string, error) {
 //  3. Apply scReduce32 to obtain a canonical Monero spend key scalar.
 //  4. Encode the reduced bytes into 24 + 1 (checksum) words.
 func ToMoneroLegacySeed(key *ed25519.PrivateKey, seedPassphrase string) (string, error) {
-	seedBytes := combineSeedPassphrase(key.Seed(), seedPassphrase)
-	reduced := scReduce32(seedBytes)
+	return ToMoneroLegacySeedWithPrefix(key, seedPassphrase, "monero")
+}
+
+// ToMoneroLegacySeedWithPrefix is identical to ToMoneroLegacySeed but mixes a
+// domain prefix into the entropy before reduction, ensuring different prefixes
+// produce completely different 25-word seeds from the same SSH key.
+//
+// The prefix is applied using the same mechanism as the BIP-39 prefix path:
+//  1. Extract the 32-byte Ed25519 seed and optionally mix in the seed passphrase.
+//  2. Prepend sha256(prefix)[:2] to the combined seed bytes.
+//  3. SHA-256 hash the prefixed bytes to produce a fresh 32-byte scalar input.
+//  4. Apply scReduce32 and encode to 24 + 1 (checksum) words.
+//
+// Use prefix "monero" for Monero legacy seeds and "beldex" for Beldex seeds so
+// they diverge even though both use the same Electrum word encoding.
+func ToMoneroLegacySeedWithPrefix(key *ed25519.PrivateKey, seedPassphrase string, prefix string) (string, error) {
+	combinedSeed := combineSeedPassphrase(key.Seed(), seedPassphrase)
+
+	// Hash the prefix and take the first 2 bytes — same sizing as the BIP-39
+	// prefix path in toMnemonicFromSeedBytes so the mechanism is consistent.
+	prefixHash := sha256.Sum256([]byte(prefix))
+	prefixed := make([]byte, 2+len(combinedSeed)) //nolint:mnd
+	copy(prefixed[:2], prefixHash[:2])
+	copy(prefixed[2:], combinedSeed)
+
+	// Hash the prefixed input down to a 32-byte scalar candidate.
+	hashed := sha256.Sum256(prefixed)
+
+	reduced := scReduce32(hashed[:])
 	words, err := moneroLegacyBytesToWords(reduced)
 	if err != nil {
-		return "", fmt.Errorf("failed to encode Monero legacy seed: %w", err)
+		return "", fmt.Errorf("failed to encode Monero legacy seed with prefix %q: %w", prefix, err)
 	}
 	return strings.Join(words, " "), nil
 }

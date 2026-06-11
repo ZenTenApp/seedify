@@ -7,6 +7,7 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -1355,18 +1356,19 @@ func printPEMPhrase(label string, phrase string) {
 }
 
 // printSSHKeyPair prints the SSH public key (RFC 4716 OpenSSH PEM) with the
-// key type prepended inside the block (ssh-ed25519 <base64>), the private key
-// (OpenSSH PEM), the raw 32-byte ed25519 seed in hex, and the SHA-256 / MD5
-// fingerprints of the public key. Each base64 value is on a single unwrapped line.
-// privateKeyPEM must be the raw PEM bytes as read from disk.
-func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte) error {
+// key type prepended inside the block (ssh-ed25519 <base64> <npub>), the
+// private key (OpenSSH PEM) with its SHA-256 hash, the raw 32-byte ed25519
+// seed in hex with its SHA-256 hash, and the SHA-256 fingerprint of the public
+// key. npub is appended as the authorized_keys-style comment on the public key
+// line. privateKeyPEM must be the raw PEM bytes as read from disk.
+func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte, npub string) error {
 	sshPubKey, err := ssh.NewPublicKey(ed25519Key.Public())
 	if err != nil {
 		return fmt.Errorf("failed to encode SSH public key: %w", err)
 	}
 
 	pubB64 := base64.StdEncoding.EncodeToString(sshPubKey.Marshal())
-	fmt.Printf("-----BEGIN OPENSSH PUBLIC KEY-----\nssh-ed25519 %s\n-----END OPENSSH PUBLIC KEY-----\n", pubB64)
+	fmt.Printf("-----BEGIN OPENSSH PUBLIC KEY-----\nssh-ed25519 %s %s\n-----END OPENSSH PUBLIC KEY-----\n", pubB64, npub)
 
 	// pem.Decode extracts the raw OpenSSH key bytes so we can re-encode them
 	// as a single unwrapped base64 line instead of the default 64-char wrapping.
@@ -1378,15 +1380,20 @@ func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte) error
 	privB64 := base64.StdEncoding.EncodeToString(block.Bytes)
 	fmt.Printf("\n-----BEGIN OPENSSH PRIVATE KEY-----\n%s\n-----END OPENSSH PRIVATE KEY-----\n", privB64)
 
+	privHash := sha256.Sum256([]byte(privB64))
+	fmt.Printf("\n-----BEGIN OPENSSH PRIVATE KEY HASH-----\n%s\n-----END OPENSSH PRIVATE KEY HASH-----\n", hex.EncodeToString(privHash[:]))
+
 	// Raw 32-byte seed — the root secret from which the key pair is derived.
-	seedHex := hex.EncodeToString(ed25519Key.Seed())
+	seedBytes := ed25519Key.Seed()
+	seedHex := hex.EncodeToString(seedBytes)
 	fmt.Printf("\n-----BEGIN ED25519 SEED-----\n%s\n-----END ED25519 SEED-----\n", seedHex)
 
-	// Public key fingerprints (SHA-256 is the modern default; MD5 is shown for
-	// compatibility with older ssh-keygen / authorized_keys tooling).
-	sha256fp := strings.TrimPrefix(ssh.FingerprintSHA256(sshPubKey), "SHA256:")
-	md5fp := ssh.FingerprintLegacyMD5(sshPubKey)
-	fmt.Printf("\n-----BEGIN OPENSSH FINGERPRINT-----\n%s (SHA256)\n%s (MD5)\n-----END OPENSSH FINGERPRINT-----\n", sha256fp, md5fp)
+	seedHash := sha256.Sum256(seedBytes)
+	fmt.Printf("\n-----BEGIN ED25519 SEED HASH-----\n%s\n-----END ED25519 SEED HASH-----\n", hex.EncodeToString(seedHash[:]))
+
+	// SHA-256 fingerprint in the standard ssh-keygen format (SHA256:<base64>).
+	sha256fp := ssh.FingerprintSHA256(sshPubKey)
+	fmt.Printf("\n-----BEGIN OPENSSH FINGERPRINT-----\n%s\n-----END OPENSSH FINGERPRINT-----\n", sha256fp)
 
 	return nil
 }
@@ -1438,8 +1445,20 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 		return unsupportedKeyTypeError(key)
 	}
 
+	// Pre-derive the 24-word mnemonic and Nostr keys so the npub can be used
+	// as the public key comment before printing the SSH key pair.
+	mnemonic24, err := seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
+	if err != nil {
+		return fmt.Errorf("could not generate 24-word mnemonic: %w", err)
+	}
+
+	nostrKeys, err := seedify.DeriveNostrKeysWithHex(mnemonic24, "")
+	if err != nil {
+		return fmt.Errorf("could not derive Nostr keys from 24-word mnemonic: %w", err)
+	}
+
 	fmt.Print("\n\n")
-	if err := printSSHKeyPair(ed25519Key, bts); err != nil {
+	if err := printSSHKeyPair(ed25519Key, bts, nostrKeys.Npub); err != nil {
 		return err
 	}
 
@@ -1479,28 +1498,11 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	}
 
 	// 3. 24-word seed phrase (standard, no prefix)
-	mnemonic24, err := seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
-	if err != nil {
-		return fmt.Errorf("could not generate 24-word mnemonic: %w", err)
-	}
 	// 2 empty lines between outputs
 	fmt.Print("\n\n")
 	printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
 
-	// 3b. Monero 25-word legacy seed (Electrum-style)
-	moneroLegacySeed, err := seedify.ToMoneroLegacySeed(ed25519Key, seedPassphrase)
-	if err != nil {
-		return fmt.Errorf("could not generate Monero legacy seed: %w", err)
-	}
-	fmt.Print("\n\n")
-	printPEMPhrase("25-WORD MONERO LEGACY SEED", moneroLegacySeed)
-
 	// 4. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
-	nostrKeys, err := seedify.DeriveNostrKeysWithHex(mnemonic24, "")
-	if err != nil {
-		return fmt.Errorf("could not derive Nostr keys from 24-word mnemonic: %w", err)
-	}
-	// 2 empty lines between outputs
 	fmt.Print("\n\n")
 	fmt.Println("----- nPubKey / hexPubKey / nSecKey / hexSecKey -----")
 	fmt.Println(nostrKeys.Npub)
@@ -1509,12 +1511,27 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	fmt.Println(nostrKeys.PrivKeyHex)
 	fmt.Println("----- nPubKey / hexPubKey / nSecKey / hexSecKey -----")
 
-	// 5. Brave 25-word seed phrase (24 brave-prefixed words + 25th word)
+	// 5. Monero 25-word legacy seed (Electrum-style, "monero" prefix)
+	moneroLegacySeed, err := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "monero")
+	if err != nil {
+		return fmt.Errorf("could not generate Monero legacy seed: %w", err)
+	}
+	fmt.Print("\n\n")
+	printPEMPhrase("25-WORD MONERO LEGACY SEED", moneroLegacySeed)
+
+	// 6. Beldex 25-word seed ("beldex" prefix ensures divergence from Monero)
+	bdxSeed, err := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "beldex")
+	if err != nil {
+		return fmt.Errorf("could not generate Beldex seed: %w", err)
+	}
+	fmt.Print("\n\n")
+	printPEMPhrase("25-WORD BELDEX (BDX) SEED", bdxSeed)
+
+	// 7. Brave 25-word seed phrase (24 brave-prefixed words + 25th word)
 	braveMnemonic, err := seedify.ToMnemonicWithBraveSync(ed25519Key, seedPassphrase)
 	if err != nil {
 		return fmt.Errorf("could not generate brave 25-word mnemonic: %w", err)
 	}
-	// 2 empty lines between outputs
 	fmt.Print("\n\n")
 	printPEMPhrase("25-WORD BRAVE-SYNC", braveMnemonic)
 
@@ -1714,8 +1731,18 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 		return unsupportedKeyTypeError(key)
 	}
 
+	// Pre-derive the 24-word mnemonic and npub for the SSH public key comment.
+	mnemonic24ForComment, m24Err := seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
+	if m24Err != nil {
+		return fmt.Errorf("could not generate 24-word mnemonic for key comment: %w", m24Err)
+	}
+	nostrKeysForComment, nkErr := seedify.DeriveNostrKeysWithHex(mnemonic24ForComment, "")
+	if nkErr != nil {
+		return fmt.Errorf("could not derive Nostr keys for key comment: %w", nkErr)
+	}
+
 	fmt.Print("\n\n")
-	if err := printSSHKeyPair(ed25519Key, bts); err != nil {
+	if err := printSSHKeyPair(ed25519Key, bts, nostrKeysForComment.Npub); err != nil {
 		return err
 	}
 
@@ -1791,7 +1818,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 
 			// 25-word legacy seed — year-independent, printed once after all polyseed blocks.
 			if deriveXmrLegacy {
-				legacySeed, legacyErr := seedify.ToMoneroLegacySeed(ed25519Key, seedPassphrase)
+				legacySeed, legacyErr := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "monero")
 				if legacyErr != nil {
 					return fmt.Errorf("failed to derive Monero legacy seed: %w", legacyErr)
 				}
@@ -1815,10 +1842,10 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 				fmt.Println()
 			}
 
-			// Beldex (BDX) uses the same 25-word seed as Monero but with distinct
-			// network prefixes, so derive it after the Monero legacy block.
+			// Beldex uses the same Electrum encoding as Monero but with a distinct
+			// "beldex" prefix so the seed — and therefore addresses — diverge.
 			if deriveBdx {
-				bdxSeed, bdxSeedErr := seedify.ToMoneroLegacySeed(ed25519Key, seedPassphrase)
+				bdxSeed, bdxSeedErr := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "beldex")
 				if bdxSeedErr != nil {
 					return fmt.Errorf("failed to derive Beldex seed: %w", bdxSeedErr)
 				}
