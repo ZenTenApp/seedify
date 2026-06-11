@@ -1753,12 +1753,12 @@ func DeriveMoneroKeysFromLegacySeed(mnemonic string, numSubaddresses int) (*Mone
 // bytes in the prefix: byte0 = (v & 0x7F) | 0x80, byte1 = v >> 7.
 const (
 	// beldexSubaddrPrefixByte is the single-byte mainnet subaddress tag (116 < 128).
-	beldexSubaddrPrefixByte = byte(116) //nolint:mnd
+	beldexSubaddrPrefixByte = byte(116)
 )
 
 // beldexMainnetPrefix is the 2-byte varint encoding of Beldex mainnet tag 209 (0xd1).
 // varint(209): first byte = (209 & 0x7F) | 0x80 = 0xD1, second byte = 209 >> 7 = 0x01.
-var beldexMainnetPrefix = []byte{0xD1, 0x01} //nolint:mnd
+var beldexMainnetPrefix = []byte{0xD1, 0x01}
 
 // deriveBeldexSubaddress derives a Beldex subaddress at (major, minor).
 // The derivation is identical to Monero's (same "SubAddr\x00" Hs prefix),
@@ -1854,8 +1854,6 @@ func DeriveBeldexKeysFromLegacySeed(mnemonic string, numSubaddresses int) (*Mone
 
 // moneroBase58PartialBlockSizes maps a partial block's byte count (0–8) to its
 // expected encoded character count under Monero's base58 scheme.
-//
-//nolint:mnd
 var moneroBase58PartialBlockSizes = [9]int{0, 2, 3, 5, 6, 7, 9, 10, 11}
 
 // moneroBase58Encode encodes rawBytes using Monero's base58 encoding scheme.
