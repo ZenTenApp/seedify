@@ -637,7 +637,7 @@ func TestToMoneroLegacySeed_WordCount(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed, err := ToMoneroLegacySeed(&key, "")
+	seed, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	words := strings.Fields(seed)
@@ -652,7 +652,7 @@ func TestToMoneroLegacySeed_WordsInWordlist(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed, err := ToMoneroLegacySeed(&key, "")
+	seed, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	// Build lookup map from the package-level wordlist.
@@ -675,7 +675,7 @@ func TestToMoneroLegacySeed_ChecksumWord(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed, err := ToMoneroLegacySeed(&key, "")
+	seed, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	words := strings.Fields(seed)
@@ -693,10 +693,10 @@ func TestToMoneroLegacySeed_Deterministic(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed1, err := ToMoneroLegacySeed(&key, "")
+	seed1, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
-	seed2, err := ToMoneroLegacySeed(&key, "")
+	seed2, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	is.Equal(seed1, seed2)
@@ -712,9 +712,9 @@ func TestToMoneroLegacySeed_DifferentKeysProduceDifferentSeeds(t *testing.T) {
 	_, key2, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed1, err := ToMoneroLegacySeed(&key1, "")
+	seed1, err := ToMoneroLegacySeedWithPrefix(&key1, "", "monero")
 	is.NoErr(err)
-	seed2, err := ToMoneroLegacySeed(&key2, "")
+	seed2, err := ToMoneroLegacySeedWithPrefix(&key2, "", "monero")
 	is.NoErr(err)
 
 	is.True(seed1 != seed2)
@@ -728,9 +728,9 @@ func TestToMoneroLegacySeed_PassphraseChangesOutput(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seedNoPass, err := ToMoneroLegacySeed(&key, "")
+	seedNoPass, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
-	seedWithPass, err := ToMoneroLegacySeed(&key, "hunter2")
+	seedWithPass, err := ToMoneroLegacySeedWithPrefix(&key, "hunter2", "monero")
 	is.NoErr(err)
 
 	is.True(seedNoPass != seedWithPass)
@@ -744,7 +744,7 @@ func TestDeriveMoneroKeysFromLegacySeed_ValidFormat(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed, err := ToMoneroLegacySeed(&key, "")
+	seed, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	keys, err := DeriveMoneroKeysFromLegacySeed(seed, 0)
@@ -762,7 +762,7 @@ func TestDeriveMoneroKeysFromLegacySeed_Subaddresses(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed, err := ToMoneroLegacySeed(&key, "")
+	seed, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	const numSub = 9
@@ -784,7 +784,7 @@ func TestMoneroLegacyRoundtrip(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed, err := ToMoneroLegacySeed(&key, "")
+	seed, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	keys1, err := DeriveMoneroKeysFromLegacySeed(seed, 3) //nolint:mnd
@@ -846,7 +846,7 @@ func TestDeriveBeldexKeysFromLegacySeed_ValidFormat(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed, err := ToMoneroLegacySeed(&key, "")
+	seed, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	keys, err := DeriveBeldexKeysFromLegacySeed(seed, 0)
@@ -864,7 +864,7 @@ func TestDeriveBeldexKeysFromLegacySeed_Subaddresses(t *testing.T) {
 	is.NoErr(err)
 
 	const numSub = 3
-	seed, err := ToMoneroLegacySeed(&key, "")
+	seed, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	keys, err := DeriveBeldexKeysFromLegacySeed(seed, numSub)
@@ -888,7 +888,7 @@ func TestDeriveBeldexKeysFromLegacySeed_Deterministic(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed, err := ToMoneroLegacySeed(&key, "")
+	seed, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	keys1, err := DeriveBeldexKeysFromLegacySeed(seed, 2) //nolint:mnd
@@ -908,7 +908,7 @@ func TestBeldexAddressDifferentFromMonero(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	is.NoErr(err)
 
-	seed, err := ToMoneroLegacySeed(&key, "")
+	seed, err := ToMoneroLegacySeedWithPrefix(&key, "", "monero")
 	is.NoErr(err)
 
 	xmrKeys, err := DeriveMoneroKeysFromLegacySeed(seed, 0)
