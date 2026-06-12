@@ -279,31 +279,18 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 					if err != nil {
 						return fmt.Errorf("invalid word counts: %w", err)
 					}
-					err = generateUnifiedOutput(keyPath, parsedCounts, seedPassphrase,
-						false, false, false, false, false, false, false, false, false, false)
+				err = generateUnifiedOutput(keyPath, parsedCounts, seedPassphrase,
+					false, false, false, false, false, false, false, false, false, false, false)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
 							return formatPasswordError(err)
 						}
 						return err
 					}
-				} else if hasDerivationFlags {
-					// Route through generateUnifiedOutput so --xmr-legacy is handled uniformly.
-					var wc []int
-					if bitcoin {
-						wc = append(wc, 12) //nolint:mnd
-					}
-					if monero || moneroLegacy || beldex {
-						wc = append(wc, 16) //nolint:mnd
-					}
-					if bitcoin || ethereum || zcash || solana || tron || nostr {
-						wc = append(wc, 24) //nolint:mnd
-					}
-					if len(wc) == 0 {
-						wc = []int{16}
-					}
-					err := generateUnifiedOutput(keyPath, wc, seedPassphrase,
-						nostr, false, bitcoin, ethereum, zcash, solana, tron, monero, moneroLegacy, beldex)
+			} else if hasDerivationFlags {
+				wc := buildWordCounts(bitcoin, ethereum, zcash, solana, tron, nostr, monero, polyseedAll)
+				err := generateUnifiedOutput(keyPath, wc, seedPassphrase,
+					nostr, false, bitcoin, ethereum, zcash, solana, tron, monero, moneroLegacy, beldex, false)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
 							return formatPasswordError(err)
@@ -352,18 +339,9 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 						return fmt.Errorf("invalid word counts: %w", err)
 					}
 					wordCounts = parsedCounts
-				} else if hasCryptoFlags {
-					wordCounts = []int{}
-					if bitcoin {
-						wordCounts = append(wordCounts, 12) //nolint:mnd
-					}
-					if monero || moneroLegacy || beldex || polyseedAll {
-						wordCounts = append(wordCounts, 16) //nolint:mnd
-					}
-					if bitcoin || ethereum || zcash || solana || tron {
-						wordCounts = append(wordCounts, 24) //nolint:mnd
-					}
-				}
+			} else if hasNostrFlag || hasCryptoFlags {
+				wordCounts = buildWordCounts(bitcoin, ethereum, zcash, solana, tron, nostr, monero, polyseedAll)
+			}
 				deriveNostr = hasNostrFlag
 				showBrave = false
 				deriveBtc = bitcoin
@@ -376,7 +354,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				deriveBdx = beldex
 			}
 
-			uErr := generateUnifiedOutput(keyPath, wordCounts, seedPassphrase, deriveNostr, showBrave, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy, deriveBdx)
+			uErr := generateUnifiedOutput(keyPath, wordCounts, seedPassphrase, deriveNostr, showBrave, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy, deriveBdx, true)
 			if uErr != nil && strings.Contains(uErr.Error(), "key is not password-protected") {
 				return formatPasswordError(uErr)
 			}
@@ -1687,10 +1665,12 @@ func readPassword(msg string) ([]byte, error) {
 
 // generateUnifiedOutput generates seed phrases and wallet derivations for the specified word counts.
 // It displays outputs in a fixed order: seed phrase first, then wallet derivations.
+// When showPreamble is true, it first prints SSH key material, Tor onion address, and I2P destination;
+// pass false for targeted invocations (chain flags, --words) that only need specific output.
 // When deriveNostr is true, it derives Nostr keys directly from the SSH key (not from seed phrases).
 // When showBrave is true, it also displays the brave 24-word seed phrase at the end.
 // Crypto address flags (deriveBtc, deriveEth, deriveSol, deriveTron, deriveXmr) control which addresses to derive.
-func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase string, deriveNostr bool, showBrave bool, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy, deriveBdx bool) error {
+func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase string, deriveNostr bool, showBrave bool, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy, deriveBdx bool, showPreamble bool) error {
 	// Parse the key once
 	f, err := openFileOrStdin(keyPath)
 	if err != nil {
@@ -1731,38 +1711,40 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 		return unsupportedKeyTypeError(key)
 	}
 
-	// Pre-derive the 24-word mnemonic and npub for the SSH public key comment.
-	mnemonic24ForComment, m24Err := seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
-	if m24Err != nil {
-		return fmt.Errorf("could not generate 24-word mnemonic for key comment: %w", m24Err)
-	}
-	nostrKeysForComment, nkErr := seedify.DeriveNostrKeysWithHex(mnemonic24ForComment, "")
-	if nkErr != nil {
-		return fmt.Errorf("could not derive Nostr keys for key comment: %w", nkErr)
-	}
+	if showPreamble {
+		// Pre-derive the 24-word mnemonic and npub for the SSH public key comment.
+		mnemonic24ForComment, m24Err := seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
+		if m24Err != nil {
+			return fmt.Errorf("could not generate 24-word mnemonic for key comment: %w", m24Err)
+		}
+		nostrKeysForComment, nkErr := seedify.DeriveNostrKeysWithHex(mnemonic24ForComment, "")
+		if nkErr != nil {
+			return fmt.Errorf("could not derive Nostr keys for key comment: %w", nkErr)
+		}
 
-	fmt.Print("\n\n")
-	if err := printSSHKeyPair(ed25519Key, bts, nostrKeysForComment.Npub); err != nil {
-		return err
-	}
+		fmt.Print("\n\n")
+		if err := printSSHKeyPair(ed25519Key, bts, nostrKeysForComment.Npub); err != nil {
+			return err
+		}
 
-	// Derive and display Tor v3 onion address (derived directly from SSH key).
-	onionKeys, onionErr := seedify.DeriveOnionServiceKeys(ed25519Key)
-	if onionErr != nil {
-		return fmt.Errorf("could not derive Tor v3 hidden service keys: %w", onionErr)
-	}
-	fmt.Printf("\n-----BEGIN TOR ONION ADDRESS-----\n%s\n-----END TOR ONION ADDRESS-----\n", onionKeys.OnionAddress)
+		// Derive and display Tor v3 onion address (derived directly from SSH key).
+		onionKeys, onionErr := seedify.DeriveOnionServiceKeys(ed25519Key)
+		if onionErr != nil {
+			return fmt.Errorf("could not derive Tor v3 hidden service keys: %w", onionErr)
+		}
+		fmt.Printf("\n-----BEGIN TOR ONION ADDRESS-----\n%s\n-----END TOR ONION ADDRESS-----\n", onionKeys.OnionAddress)
 
-	// Derive and display I2P b32 address (derived directly from SSH key).
-	i2pKeys, i2pErr := seedify.DeriveI2PDestinationKeys(ed25519Key)
-	if i2pErr != nil {
-		return fmt.Errorf("could not derive I2P destination keys: %w", i2pErr)
+		// Derive and display I2P b32 address (derived directly from SSH key).
+		i2pKeys, i2pErr := seedify.DeriveI2PDestinationKeys(ed25519Key)
+		if i2pErr != nil {
+			return fmt.Errorf("could not derive I2P destination keys: %w", i2pErr)
+		}
+		fmt.Printf("\n-----BEGIN I2P DESTINATION-----\n")
+		fmt.Printf("B32 Address  : %s\n", i2pKeys.B32Address)
+		fmt.Printf("X25519 PrivKey (hex): %x\n", i2pKeys.X25519PrivKey)
+		fmt.Printf("Ed25519 Seed  (hex): %x\n", i2pKeys.Ed25519Seed)
+		fmt.Printf("-----END I2P DESTINATION-----\n\n")
 	}
-	fmt.Printf("\n-----BEGIN I2P DESTINATION-----\n")
-	fmt.Printf("B32 Address  : %s\n", i2pKeys.B32Address)
-	fmt.Printf("X25519 PrivKey (hex): %x\n", i2pKeys.X25519PrivKey)
-	fmt.Printf("Ed25519 Seed  (hex): %x\n", i2pKeys.Ed25519Seed)
-	fmt.Printf("-----END I2P DESTINATION-----\n\n")
 
 	// Resolve polyseed iteration list once before the word-count loop.
 	// --all-polyseeds overrides --polyseed-year / --polyseed-month.
@@ -1816,57 +1798,10 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 				}
 			}
 
-			// 25-word legacy seed — year-independent, printed once after all polyseed blocks.
-			if deriveXmrLegacy {
-				legacySeed, legacyErr := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "monero")
-				if legacyErr != nil {
-					return fmt.Errorf("failed to derive Monero legacy seed: %w", legacyErr)
+			if deriveXmr || deriveXmrLegacy {
+				if err := displayMoneroLegacyOutput(ed25519Key, seedPassphrase); err != nil {
+					return err
 				}
-
-				fmt.Println("[25 word monero legacy seed]")
-				fmt.Println()
-				fmt.Println(legacySeed)
-				fmt.Println()
-
-				legacyKeys, legacyKErr := seedify.DeriveMoneroKeysFromLegacySeed(legacySeed, 9) //nolint:mnd
-				if legacyKErr != nil {
-					return fmt.Errorf("failed to derive Monero keys from legacy seed: %w", legacyKErr)
-				}
-
-				fmt.Println("[monero addresses from 25 word legacy seed]")
-				fmt.Println()
-				fmt.Printf("%s (primary address)\n", legacyKeys.PrimaryAddress)
-				for j, subaddr := range legacyKeys.Subaddresses {
-					fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
-				}
-				fmt.Println()
-			}
-
-			// Beldex uses the same Electrum encoding as Monero but with a distinct
-			// "beldex" prefix so the seed — and therefore addresses — diverge.
-			if deriveBdx {
-				bdxSeed, bdxSeedErr := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "beldex")
-				if bdxSeedErr != nil {
-					return fmt.Errorf("failed to derive Beldex seed: %w", bdxSeedErr)
-				}
-
-				fmt.Println("[25 word beldex (bdx) seed]")
-				fmt.Println()
-				fmt.Println(bdxSeed)
-				fmt.Println()
-
-				bdxKeys, bdxKErr := seedify.DeriveBeldexKeysFromLegacySeed(bdxSeed, 9) //nolint:mnd
-				if bdxKErr != nil {
-					return fmt.Errorf("failed to derive Beldex keys from legacy seed: %w", bdxKErr)
-				}
-
-				fmt.Println("[beldex addresses from 25 word seed]")
-				fmt.Println()
-				fmt.Printf("%s (primary address)\n", bdxKeys.PrimaryAddress)
-				for j, subaddr := range bdxKeys.Subaddresses {
-					fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
-				}
-				fmt.Println()
 			}
 		} else {
 			mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, count, seedPassphrase, false, 0)
@@ -2092,6 +2027,20 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 		}
 	}
 
+	// Monero legacy uses a year-independent 25-word seed derived directly from the SSH key.
+	// When the 16-word polyseed section ran, legacy output is already shown there.
+	if deriveXmrLegacy && !wordCountsInclude(wordCounts, 16) { //nolint:mnd
+		if err := displayMoneroLegacyOutput(ed25519Key, seedPassphrase); err != nil {
+			return err
+		}
+	}
+
+	if deriveBdx {
+		if err := displayBeldexOutput(ed25519Key, seedPassphrase); err != nil {
+			return err
+		}
+	}
+
 	// Display brave 25-word seed phrase at the end if requested
 	if showBrave {
 		braveMnemonic, err := seedify.ToMnemonicWithBraveSync(ed25519Key, seedPassphrase)
@@ -2142,6 +2091,32 @@ func parseWordCounts(wordCountStr string) ([]int, error) {
 	}
 
 	return wordCounts, nil
+}
+
+func wordCountsInclude(wordCounts []int, count int) bool {
+	for _, wc := range wordCounts {
+		if wc == count {
+			return true
+		}
+	}
+	return false
+}
+
+// buildWordCounts returns the ordered word-count slice for generateUnifiedOutput based on the active
+// chain-derivation flags. It excludes 16 for --xmr-legacy and --bdx because those flags use
+// year-independent 25-word legacy seeds that are printed by the dedicated helpers after the loop.
+func buildWordCounts(bitcoin, ethereum, zcash, solana, tron, nostrFlag, monero, polyseedAll bool) []int {
+	var wc []int
+	if bitcoin {
+		wc = append(wc, 12) //nolint:mnd
+	}
+	if monero || polyseedAll {
+		wc = append(wc, 16) //nolint:mnd
+	}
+	if bitcoin || ethereum || zcash || solana || tron || nostrFlag {
+		wc = append(wc, 24) //nolint:mnd
+	}
+	return wc
 }
 
 func askKeyPassphrase(path string) ([]byte, error) {
@@ -2383,6 +2358,62 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 	fmt.Printf("└─ %s (xprv)\n", multisigNativeExtended.StandardPrivateKey)
 	fmt.Println()
 
+	return nil
+}
+
+// displayMoneroLegacyOutput derives and prints the 25-word Monero legacy (Electrum-style) seed and
+// the primary address plus subaddresses derived from it.
+func displayMoneroLegacyOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase string) error {
+	legacySeed, legacyErr := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "monero")
+	if legacyErr != nil {
+		return fmt.Errorf("failed to derive Monero legacy seed: %w", legacyErr)
+	}
+
+	fmt.Println("[25 word monero legacy seed]")
+	fmt.Println()
+	fmt.Println(legacySeed)
+	fmt.Println()
+
+	legacyKeys, legacyKErr := seedify.DeriveMoneroKeysFromLegacySeed(legacySeed, 9) //nolint:mnd
+	if legacyKErr != nil {
+		return fmt.Errorf("failed to derive Monero keys from legacy seed: %w", legacyKErr)
+	}
+
+	fmt.Println("[monero addresses from 25 word legacy seed]")
+	fmt.Println()
+	fmt.Printf("%s (primary address)\n", legacyKeys.PrimaryAddress)
+	for j, subaddr := range legacyKeys.Subaddresses {
+		fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
+	}
+	fmt.Println()
+	return nil
+}
+
+// displayBeldexOutput derives and prints the 25-word Beldex seed (same Electrum encoding as Monero
+// but with a "beldex" prefix for domain separation) and the primary address plus subaddresses.
+func displayBeldexOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase string) error {
+	bdxSeed, bdxSeedErr := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "beldex")
+	if bdxSeedErr != nil {
+		return fmt.Errorf("failed to derive Beldex seed: %w", bdxSeedErr)
+	}
+
+	fmt.Println("[25 word beldex (bdx) seed]")
+	fmt.Println()
+	fmt.Println(bdxSeed)
+	fmt.Println()
+
+	bdxKeys, bdxKErr := seedify.DeriveBeldexKeysFromLegacySeed(bdxSeed, 9) //nolint:mnd
+	if bdxKErr != nil {
+		return fmt.Errorf("failed to derive Beldex keys from legacy seed: %w", bdxKErr)
+	}
+
+	fmt.Println("[beldex addresses from 25 word seed]")
+	fmt.Println()
+	fmt.Printf("%s (primary address)\n", bdxKeys.PrimaryAddress)
+	for j, subaddr := range bdxKeys.Subaddresses {
+		fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
+	}
+	fmt.Println()
 	return nil
 }
 
