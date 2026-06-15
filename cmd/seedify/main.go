@@ -1768,8 +1768,8 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 	// Generate and display outputs for each word count
 	for i, count := range wordCounts {
 		// For 16-word polyseed, generate one mnemonic per (year, month) slot.
-		// The 25-word legacy seed is year-independent (derived directly from the
-		// SSH key), so it is printed once after all polyseed slots.
+		// Each slot shows the 16-word phrase plus its corresponding 25-word legacy
+		// encoding, then optional Monero address sections when --xmr is set.
 		if count == 16 { //nolint:mnd,nestif
 			for _, slot := range polyseedSlots {
 				mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(slot.year, slot.month)) //nolint:mnd
@@ -1780,6 +1780,12 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 				fmt.Printf("[16 word seed phrase (%d-%02d)]\n", slot.year, int(slot.month))
 				fmt.Println()
 				fmt.Println(mnemonic)
+
+				legacySeed, legacyErr := seedify.ToMoneroLegacySeedFromPolyseed(mnemonic)
+				if legacyErr != nil {
+					return fmt.Errorf("failed to derive Monero legacy seed from polyseed (%d-%02d): %w", slot.year, int(slot.month), legacyErr)
+				}
+				fmt.Println(legacySeed)
 				fmt.Println()
 
 				if deriveXmr {
@@ -1796,11 +1802,16 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					}
 					fmt.Println()
 				}
-			}
 
-			if deriveXmr || deriveXmrLegacy {
-				if err := displayMoneroLegacyOutput(ed25519Key, seedPassphrase); err != nil {
-					return err
+				if deriveXmr || deriveXmrLegacy {
+					fmt.Println("[25 word monero legacy seed]")
+					fmt.Println()
+					fmt.Println(legacySeed)
+					fmt.Println()
+
+					if err := displayMoneroLegacyAddresses(legacySeed); err != nil {
+						return err
+					}
 				}
 			}
 		} else {
@@ -2362,7 +2373,7 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 }
 
 // displayMoneroLegacyOutput derives and prints the 25-word Monero legacy (Electrum-style) seed and
-// the primary address plus subaddresses derived from it.
+// the primary address plus subaddresses derived from it. Used for --xmr-legacy without polyseed output.
 func displayMoneroLegacyOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase string) error {
 	legacySeed, legacyErr := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "monero")
 	if legacyErr != nil {
@@ -2374,6 +2385,11 @@ func displayMoneroLegacyOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase st
 	fmt.Println(legacySeed)
 	fmt.Println()
 
+	return displayMoneroLegacyAddresses(legacySeed)
+}
+
+// displayMoneroLegacyAddresses prints Monero primary and subaddresses from a 25-word legacy seed.
+func displayMoneroLegacyAddresses(legacySeed string) error {
 	legacyKeys, legacyKErr := seedify.DeriveMoneroKeysFromLegacySeed(legacySeed, 9) //nolint:mnd
 	if legacyKErr != nil {
 		return fmt.Errorf("failed to derive Monero keys from legacy seed: %w", legacyKErr)
