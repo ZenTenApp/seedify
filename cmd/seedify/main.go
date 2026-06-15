@@ -279,18 +279,18 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 					if err != nil {
 						return fmt.Errorf("invalid word counts: %w", err)
 					}
-				err = generateUnifiedOutput(keyPath, parsedCounts, seedPassphrase,
-					false, false, false, false, false, false, false, false, false, false, false)
+					err = generateUnifiedOutput(keyPath, parsedCounts, seedPassphrase,
+						false, false, false, false, false, false, false, false, false, false, false)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
 							return formatPasswordError(err)
 						}
 						return err
 					}
-			} else if hasDerivationFlags {
-				wc := buildWordCounts(bitcoin, ethereum, zcash, solana, tron, nostr, monero, polyseedAll)
-				err := generateUnifiedOutput(keyPath, wc, seedPassphrase,
-					nostr, false, bitcoin, ethereum, zcash, solana, tron, monero, moneroLegacy, beldex, false)
+				} else if hasDerivationFlags {
+					wc := buildWordCounts(bitcoin, ethereum, zcash, solana, tron, nostr, monero, polyseedAll)
+					err := generateUnifiedOutput(keyPath, wc, seedPassphrase,
+						nostr, false, bitcoin, ethereum, zcash, solana, tron, monero, moneroLegacy, beldex, false)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
 							return formatPasswordError(err)
@@ -339,9 +339,9 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 						return fmt.Errorf("invalid word counts: %w", err)
 					}
 					wordCounts = parsedCounts
-			} else if hasNostrFlag || hasCryptoFlags {
-				wordCounts = buildWordCounts(bitcoin, ethereum, zcash, solana, tron, nostr, monero, polyseedAll)
-			}
+				} else if hasNostrFlag || hasCryptoFlags {
+					wordCounts = buildWordCounts(bitcoin, ethereum, zcash, solana, tron, nostr, monero, polyseedAll)
+				}
 				deriveNostr = hasNostrFlag
 				showBrave = false
 				deriveBtc = bitcoin
