@@ -327,6 +327,23 @@ seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025
 cat ~/.ssh/id_ed25519 | seedify --words 18
 ```
 
+### Output modes
+
+**Bare default** (`seedify <key>`): prints SSH key material (public key, private key,
+Ed25519 seed, fingerprint) followed by the full curated set of seed phrases (12-word,
+16-word Polyseed, 24-word, Nostr keys, Monero legacy, Beldex, Brave Sync).
+
+**`--full`**: same SSH/Tor/I2P preamble as the default, then all word counts and all
+chain derivations.
+
+**Chain flags** (`--btc`, `--eth`, `--nostr`, `--xmr`, `--bdx`, `--xmr-legacy`, etc.)
+and **`--words`**: emit *only* the requested output — no SSH key material, no Tor/I2P
+address. Use these when you only need a specific seed phrase or address.
+
+**Exclusive flags** (`--brave`, `--zenprofile`, `--to-rsa`, `--to-dkim`, `--to-onion`,
+`--to-i2p`, `--to-pgp`): each produces a single focused output and bypasses seed phrase
+generation entirely.
+
 ### Flags
 
 | Flag | Description |
@@ -334,7 +351,7 @@ cat ~/.ssh/id_ed25519 | seedify --words 18
 | `-w, --words` | Word counts to generate, comma-separated (12,15,16,18,21,24) |
 | `--seed-passphrase` | Combine with SSH key seed for additional entropy |
 | `--brave` | Generate 25-word Brave Sync phrase |
-| `--full` | Print all word counts and all chain derivations |
+| `--full` | Print all word counts and all chain derivations (with full preamble) |
 | `--nostr` | Derive Nostr keys (npub/nsec) |
 | `--btc` | Derive Bitcoin addresses |
 | `--eth` | Derive Ethereum address |

@@ -630,6 +630,69 @@ func TestDeriveMoneroAddress_DifferentMnemonicsProduceDifferentAddresses(t *test
 	is.True(addr1 != addr2)
 }
 
+// TestToMoneroLegacySeedFromPolyseed_WordCount verifies the polyseed-derived legacy seed is 25 words.
+func TestToMoneroLegacySeedFromPolyseed_WordCount(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	polyseed, err := ToMnemonicWithLength(&key, 16, "", false, PolyseedDefaultBirthday)
+	is.NoErr(err)
+
+	legacy, err := ToMoneroLegacySeedFromPolyseed(polyseed)
+	is.NoErr(err)
+
+	is.Equal(len(strings.Fields(legacy)), 25)
+}
+
+// TestToMoneroLegacySeedFromPolyseed_MatchesPolyseedWallet verifies the legacy seed
+// derived from a polyseed produces the same Monero address as DeriveMoneroKeys.
+func TestToMoneroLegacySeedFromPolyseed_MatchesPolyseedWallet(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	polyseed, err := ToMnemonicWithLength(&key, 16, "", false, PolyseedDefaultBirthday)
+	is.NoErr(err)
+
+	legacy, err := ToMoneroLegacySeedFromPolyseed(polyseed)
+	is.NoErr(err)
+
+	polyseedKeys, err := DeriveMoneroKeys(polyseed, 0)
+	is.NoErr(err)
+
+	legacyKeys, err := DeriveMoneroKeysFromLegacySeed(legacy, 0)
+	is.NoErr(err)
+
+	is.Equal(polyseedKeys.PrimaryAddress, legacyKeys.PrimaryAddress)
+}
+
+// TestToMoneroLegacySeedFromPolyseed_DifferentPolyseedsProduceDifferentLegacySeeds verifies
+// that distinct polyseed birthdays yield distinct 25-word legacy seeds.
+func TestToMoneroLegacySeedFromPolyseed_DifferentPolyseedsProduceDifferentLegacySeeds(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	polyseed2025, err := ToMnemonicWithLength(&key, 16, "", false, PolyseedDefaultBirthday)
+	is.NoErr(err)
+
+	polyseed2021, err := ToMnemonicWithLength(&key, 16, "", false, 1635768000) // 1 Nov 2021
+	is.NoErr(err)
+	is.True(polyseed2025 != polyseed2021)
+
+	legacy2025, err := ToMoneroLegacySeedFromPolyseed(polyseed2025)
+	is.NoErr(err)
+
+	legacy2021, err := ToMoneroLegacySeedFromPolyseed(polyseed2021)
+	is.NoErr(err)
+
+	is.True(legacy2025 != legacy2021)
+}
+
 // TestToMoneroLegacySeed_WordCount verifies the legacy seed is exactly 25 words.
 func TestToMoneroLegacySeed_WordCount(t *testing.T) {
 	is := is.New(t)

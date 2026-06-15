@@ -1,0 +1,237 @@
+// Package main provides tests for the seedify CLI.
+package main
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"golang.org/x/crypto/ssh"
+)
+
+// TestBuildWordCounts verifies that buildWordCounts produces the correct ordered slices
+// for every combination of chain-derivation flags.
+func TestBuildWordCounts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		bitcoin      bool
+		ethereum     bool
+		zcash        bool
+		solana       bool
+		tron         bool
+		nostrFlag    bool
+		monero       bool
+		polyseedAll  bool
+		wantCounts   []int
+	}{
+		{
+			name:       "no flags — empty",
+			wantCounts: nil,
+		},
+		{
+			name:       "--bdx only — no polyseed needed",
+			wantCounts: nil,
+		},
+		{
+			name:       "--xmr-legacy only — no polyseed needed",
+			wantCounts: nil,
+		},
+		{
+			name:       "--xmr (polyseed) adds 16",
+			monero:     true,
+			wantCounts: []int{16},
+		},
+		{
+			name:        "--all-polyseeds adds 16",
+			polyseedAll: true,
+			wantCounts:  []int{16},
+		},
+		{
+			name:       "--btc adds 12 and 24",
+			bitcoin:    true,
+			wantCounts: []int{12, 24},
+		},
+		{
+			name:       "--nostr adds 24",
+			nostrFlag:  true,
+			wantCounts: []int{24},
+		},
+		{
+			name:       "--eth adds 24",
+			ethereum:   true,
+			wantCounts: []int{24},
+		},
+		{
+			name:       "--sol adds 24",
+			solana:     true,
+			wantCounts: []int{24},
+		},
+		{
+			name:       "--btc --xmr adds 12, 16, 24",
+			bitcoin:    true,
+			monero:     true,
+			wantCounts: []int{12, 16, 24},
+		},
+		{
+			name:       "--btc --eth --nostr adds 12 and 24 (no duplicates)",
+			bitcoin:    true,
+			ethereum:   true,
+			nostrFlag:  true,
+			wantCounts: []int{12, 24},
+		},
+		{
+			name:       "--nostr was previously missing from --full --nostr word counts",
+			nostrFlag:  true,
+			wantCounts: []int{24},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := buildWordCounts(tc.bitcoin, tc.ethereum, tc.zcash, tc.solana, tc.tron, tc.nostrFlag, tc.monero, tc.polyseedAll)
+			if len(got) != len(tc.wantCounts) {
+				t.Fatalf("buildWordCounts = %v, want %v", got, tc.wantCounts)
+			}
+			for i := range got {
+				if got[i] != tc.wantCounts[i] {
+					t.Fatalf("buildWordCounts[%d] = %d, want %d (full: %v)", i, got[i], tc.wantCounts[i], got)
+				}
+			}
+		})
+	}
+}
+
+// testKeyWithPassphrase creates a temporary password-protected Ed25519 SSH key
+// in a temp directory and returns the file path. The key is cleaned up when the
+// test ends via t.TempDir.
+func testKeyWithPassphrase(t *testing.T, passphrase string) string {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ed25519 key: %v", err)
+	}
+	pemBlock, err := ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase))
+	if err != nil {
+		t.Fatalf("marshal private key with passphrase: %v", err)
+	}
+	keyBytes := pem.EncodeToMemory(pemBlock)
+	path := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(path, keyBytes, 0o600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	return path
+}
+
+// runSeedifyWithPassphrase runs the seedify binary at binaryPath with the given args,
+// injecting passphrase via the SEEDIFY_TEST_PASSPHRASE mechanism.
+// It relies on expect(1) being available.
+func runSeedifyWithPassphrase(t *testing.T, binaryPath, passphrase, keyPath string, args ...string) (string, error) {
+	t.Helper()
+	if _, err := exec.LookPath("expect"); err != nil {
+		t.Skip("expect(1) not available; skipping subprocess test")
+	}
+
+	allArgs := append([]string{keyPath}, args...)
+	argStr := `"` + strings.Join(allArgs, `" "`) + `"`
+	script := `set timeout 15
+spawn ` + binaryPath + ` ` + argStr + `
+expect {
+  "Enter the passphrase" { send "` + passphrase + `\r"; exp_continue }
+  eof
+}
+`
+	cmd := exec.Command("expect")
+	cmd.Stdin = strings.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestCLIOutput_ChainFlagsOmitPreamble verifies that targeted chain-flag invocations
+// omit the SSH/Tor/I2P preamble and print only the requested data.
+func TestCLIOutput_ChainFlagsOmitPreamble(t *testing.T) {
+	// Build the binary into a temp directory for subprocess tests.
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "seedify")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	buildCmd.Dir = filepath.Join("..") // cmd/seedify
+	// Resolve working directory relative to test file location.
+	buildCmd.Dir = "."
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, out)
+	}
+
+	const pass = "testpass"
+	keyPath := testKeyWithPassphrase(t, pass)
+
+	tests := []struct {
+		name        string
+		args        []string
+		mustContain []string
+		mustAbsent  []string
+	}{
+		{
+			name:        "--bdx emits only BDX seed and addresses",
+			args:        []string{"--bdx"},
+			mustContain: []string{"[25 word beldex (bdx) seed]", "[beldex addresses from 25 word seed]"},
+			mustAbsent:  []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS", "I2P DESTINATION", "[16 word seed phrase"},
+		},
+		{
+			name:        "--xmr includes polyseed and legacy 25-word seed in polyseed section",
+			args:        []string{"--xmr"},
+			mustContain: []string{"[16 word seed phrase", "[monero addresses from 16 word polyseed", "[25 word monero legacy seed]", "[monero addresses from 25 word legacy seed]"},
+			mustAbsent:  []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS", "[monero addresses from 25 word legacy seed ("},
+		},
+		{
+			name:        "--xmr-legacy emits only Monero legacy seed and addresses",
+			args:        []string{"--xmr-legacy"},
+			mustContain: []string{"[25 word monero legacy seed]", "[monero addresses from 25 word legacy seed]"},
+			mustAbsent:  []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS", "[16 word seed phrase"},
+		},
+		{
+			name:        "--words 12 emits only 12-word phrase",
+			args:        []string{"--words", "12"},
+			mustContain: []string{"[12 word seed phrase]"},
+			mustAbsent:  []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS", "[24 word seed phrase]"},
+		},
+		{
+			name:        "--nostr emits nostr keys but no preamble",
+			args:        []string{"--nostr"},
+			mustContain: []string{"[nostr keys from 24 word seed]", "npub1"},
+			mustAbsent:  []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS"},
+		},
+		{
+			name:        "--full shows preamble",
+			args:        []string{"--full"},
+			mustContain: []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS", "I2P DESTINATION"},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := runSeedifyWithPassphrase(t, binPath, pass, keyPath, tc.args...)
+			if err != nil {
+				t.Fatalf("seedify exited with error: %v\noutput:\n%s", err, out)
+			}
+			for _, want := range tc.mustContain {
+				if !strings.Contains(out, want) {
+					t.Errorf("output missing %q\nfull output:\n%s", want, out)
+				}
+			}
+			for _, absent := range tc.mustAbsent {
+				if strings.Contains(out, absent) {
+					t.Errorf("output should NOT contain %q\nfull output:\n%s", absent, out)
+				}
+			}
+		})
+	}
+}

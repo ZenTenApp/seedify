@@ -1638,6 +1638,27 @@ func DeriveMoneroKeys(mnemonic string, numSubaddresses int) (*MoneroKeys, error)
 	}, nil
 }
 
+// ToMoneroLegacySeedFromPolyseed derives the Monero legacy 25-word (Electrum-style)
+// seed from a 16-word polyseed mnemonic. Each polyseed produces a distinct legacy
+// seed; the legacy seed encodes the same spend key used by DeriveMoneroKeys.
+func ToMoneroLegacySeedFromPolyseed(mnemonic string) (string, error) {
+	seed, _, err := polyseed.Decode(mnemonic, polyseed.CoinMonero)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode polyseed mnemonic: %w", err)
+	}
+	defer seed.Free()
+
+	const polyseedKeySize = 32
+	spendKeyBytes := seed.Keygen(polyseed.CoinMonero, polyseedKeySize)
+	reducedKey := scReduce32(spendKeyBytes)
+
+	words, err := moneroLegacyBytesToWords(reducedKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode Monero legacy seed from polyseed: %w", err)
+	}
+	return strings.Join(words, " "), nil
+}
+
 // moneroLegacyChecksumIndex computes the CRC32-based checksum word index for a
 // 25-word Monero legacy mnemonic. It concatenates the first 3 characters of
 // each of the 24 data words, computes CRC32 (IEEE), and takes the result mod 24.
