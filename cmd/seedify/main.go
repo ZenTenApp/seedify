@@ -1712,38 +1712,9 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 	}
 
 	if showPreamble {
-		// Pre-derive the 24-word mnemonic and npub for the SSH public key comment.
-		mnemonic24ForComment, m24Err := seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
-		if m24Err != nil {
-			return fmt.Errorf("could not generate 24-word mnemonic for key comment: %w", m24Err)
-		}
-		nostrKeysForComment, nkErr := seedify.DeriveNostrKeysWithHex(mnemonic24ForComment, "")
-		if nkErr != nil {
-			return fmt.Errorf("could not derive Nostr keys for key comment: %w", nkErr)
-		}
-
-		fmt.Print("\n\n")
-		if err := printSSHKeyPair(ed25519Key, bts, nostrKeysForComment.Npub); err != nil {
+		if err := displayKeyPreamble(ed25519Key, bts, seedPassphrase); err != nil {
 			return err
 		}
-
-		// Derive and display Tor v3 onion address (derived directly from SSH key).
-		onionKeys, onionErr := seedify.DeriveOnionServiceKeys(ed25519Key)
-		if onionErr != nil {
-			return fmt.Errorf("could not derive Tor v3 hidden service keys: %w", onionErr)
-		}
-		fmt.Printf("\n-----BEGIN TOR ONION ADDRESS-----\n%s\n-----END TOR ONION ADDRESS-----\n", onionKeys.OnionAddress)
-
-		// Derive and display I2P b32 address (derived directly from SSH key).
-		i2pKeys, i2pErr := seedify.DeriveI2PDestinationKeys(ed25519Key)
-		if i2pErr != nil {
-			return fmt.Errorf("could not derive I2P destination keys: %w", i2pErr)
-		}
-		fmt.Printf("\n-----BEGIN I2P DESTINATION-----\n")
-		fmt.Printf("B32 Address  : %s\n", i2pKeys.B32Address)
-		fmt.Printf("X25519 PrivKey (hex): %x\n", i2pKeys.X25519PrivKey)
-		fmt.Printf("Ed25519 Seed  (hex): %x\n", i2pKeys.Ed25519Seed)
-		fmt.Printf("-----END I2P DESTINATION-----\n\n")
 	}
 
 	// Resolve polyseed iteration list once before the word-count loop.
@@ -2402,6 +2373,40 @@ func displayMoneroLegacyAddresses(legacySeed string) error {
 		fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
 	}
 	fmt.Println()
+	return nil
+}
+
+// displayKeyPreamble prints the SSH key pair, Tor onion address, and I2P destination before seed output.
+func displayKeyPreamble(ed25519Key *ed25519.PrivateKey, bts []byte, seedPassphrase string) error {
+	mnemonic24, m24Err := seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
+	if m24Err != nil {
+		return fmt.Errorf("could not generate 24-word mnemonic for key comment: %w", m24Err)
+	}
+	nostrKeys, nkErr := seedify.DeriveNostrKeysWithHex(mnemonic24, "")
+	if nkErr != nil {
+		return fmt.Errorf("could not derive Nostr keys for key comment: %w", nkErr)
+	}
+
+	fmt.Print("\n\n")
+	if err := printSSHKeyPair(ed25519Key, bts, nostrKeys.Npub); err != nil {
+		return err
+	}
+
+	onionKeys, onionErr := seedify.DeriveOnionServiceKeys(ed25519Key)
+	if onionErr != nil {
+		return fmt.Errorf("could not derive Tor v3 hidden service keys: %w", onionErr)
+	}
+	fmt.Printf("\n-----BEGIN TOR ONION ADDRESS-----\n%s\n-----END TOR ONION ADDRESS-----\n", onionKeys.OnionAddress)
+
+	i2pKeys, i2pErr := seedify.DeriveI2PDestinationKeys(ed25519Key)
+	if i2pErr != nil {
+		return fmt.Errorf("could not derive I2P destination keys: %w", i2pErr)
+	}
+	fmt.Printf("\n-----BEGIN I2P DESTINATION-----\n")
+	fmt.Printf("B32 Address  : %s\n", i2pKeys.B32Address)
+	fmt.Printf("X25519 PrivKey (hex): %x\n", i2pKeys.X25519PrivKey)
+	fmt.Printf("Ed25519 Seed  (hex): %x\n", i2pKeys.Ed25519Seed)
+	fmt.Printf("-----END I2P DESTINATION-----\n\n")
 	return nil
 }
 
