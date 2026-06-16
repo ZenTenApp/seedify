@@ -30,7 +30,6 @@ import (
 	"github.com/mattn/go-tty"
 	mcobra "github.com/muesli/mango-cobra"
 	"github.com/muesli/roff"
-	"github.com/muesli/termenv"
 	nostrpkg "github.com/nbd-wtf/go-nostr"
 	"github.com/spf13/cobra"
 	"github.com/tyler-smith/go-bip39"
@@ -1437,7 +1436,7 @@ func generateBraveSyncPhrase(path string, seedPassphrase string) (string, error)
 // Note: This function does not add extra spacing; callers are responsible for
 // managing blank lines between outputs.
 func printPEMPhrase(label string, phrase string) {
-	fmt.Printf("-----BEGIN %s-----\n%s\n-----END %s-----\n", label, phrase, label)
+	out.PEMBlock(label, phrase, true)
 }
 
 // printSSHKeyPair prints the SSH public key (RFC 4716 OpenSSH PEM) with the
@@ -1453,7 +1452,7 @@ func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte, npub 
 	}
 
 	pubB64 := base64.StdEncoding.EncodeToString(sshPubKey.Marshal())
-	fmt.Printf("-----BEGIN OPENSSH PUBLIC KEY-----\nssh-ed25519 %s %s\n-----END OPENSSH PUBLIC KEY-----\n", pubB64, npub)
+	out.PEMBlock("OPENSSH PUBLIC KEY", "ssh-ed25519 "+pubB64+" "+npub, false)
 
 	// pem.Decode extracts the raw OpenSSH key bytes so we can re-encode them
 	// as a single unwrapped base64 line instead of the default 64-char wrapping.
@@ -1463,22 +1462,22 @@ func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte, npub 
 	}
 
 	privB64 := base64.StdEncoding.EncodeToString(block.Bytes)
-	fmt.Printf("\n-----BEGIN OPENSSH PRIVATE KEY-----\n%s\n-----END OPENSSH PRIVATE KEY-----\n", privB64)
+	out.PEMBlockPrefixed(1, "OPENSSH PRIVATE KEY", privB64, true)
 
 	privHash := sha256.Sum256([]byte(privB64))
-	fmt.Printf("\n-----BEGIN OPENSSH PRIVATE KEY HASH-----\n%s\n-----END OPENSSH PRIVATE KEY HASH-----\n", hex.EncodeToString(privHash[:]))
+	out.PEMBlockPrefixed(1, "OPENSSH PRIVATE KEY HASH", hex.EncodeToString(privHash[:]), false)
 
 	// Raw 32-byte seed — the root secret from which the key pair is derived.
 	seedBytes := ed25519Key.Seed()
 	seedHex := hex.EncodeToString(seedBytes)
-	fmt.Printf("\n-----BEGIN ED25519 SEED-----\n%s\n-----END ED25519 SEED-----\n", seedHex)
+	out.PEMBlockPrefixed(1, "ED25519 SEED", seedHex, true)
 
 	seedHash := sha256.Sum256(seedBytes)
-	fmt.Printf("\n-----BEGIN ED25519 SEED HASH-----\n%s\n-----END ED25519 SEED HASH-----\n", hex.EncodeToString(seedHash[:]))
+	out.PEMBlockPrefixed(1, "ED25519 SEED HASH", hex.EncodeToString(seedHash[:]), false)
 
 	// SHA-256 fingerprint in the standard ssh-keygen format (SHA256:<base64>).
 	sha256fp := ssh.FingerprintSHA256(sshPubKey)
-	fmt.Printf("\n-----BEGIN OPENSSH FINGERPRINT-----\n%s\n-----END OPENSSH FINGERPRINT-----\n", sha256fp)
+	out.PEMBlockPrefixed(1, "OPENSSH FINGERPRINT", sha256fp, false)
 
 	return nil
 }
@@ -1589,7 +1588,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 		return fmt.Errorf("could not derive Nostr keys from 24-word mnemonic: %w", err)
 	}
 
-	fmt.Print("\n\n")
+	out.Blanks(2)
 	if err := printSSHKeyPair(ed25519Key, bts, nostrKeys.Npub); err != nil {
 		return err
 	}
@@ -1600,7 +1599,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 		return fmt.Errorf("could not generate 12-word mnemonic: %w", err)
 	}
 	// 2 empty lines before the first output
-	fmt.Print("\n\n")
+	out.Blanks(2)
 	printPEMPhrase("12-WORD SEED PHRASE", mnemonic12)
 
 	// 2. 16-word seed phrases (Polyseed).
@@ -1613,24 +1612,19 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 
 	// 3. 24-word seed phrase (standard, no prefix)
 	// 2 empty lines between outputs
-	fmt.Print("\n\n")
+	out.Blanks(2)
 	printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
 
 	// 4. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
-	fmt.Print("\n\n")
-	fmt.Println("----- nPubKey / hexPubKey / nSecKey / hexSecKey -----")
-	fmt.Println(nostrKeys.Npub)
-	fmt.Println(nostrKeys.PubKeyHex)
-	fmt.Println(nostrKeys.Nsec)
-	fmt.Println(nostrKeys.PrivKeyHex)
-	fmt.Println("----- nPubKey / hexPubKey / nSecKey / hexSecKey -----")
+	out.Blanks(2)
+	out.NostrKeyBlock(nostrKeys.Npub, nostrKeys.PubKeyHex, nostrKeys.Nsec, nostrKeys.PrivKeyHex)
 
 	// 5. Monero 25-word legacy seed (Electrum-style, "monero" prefix)
 	moneroLegacySeed, err := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "monero")
 	if err != nil {
 		return fmt.Errorf("could not generate Monero legacy seed: %w", err)
 	}
-	fmt.Print("\n\n")
+	out.Blanks(2)
 	printPEMPhrase("25-WORD MONERO LEGACY SEED", moneroLegacySeed)
 
 	// 6. Beldex 25-word seed ("beldex" prefix ensures divergence from Monero)
@@ -1638,7 +1632,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	if err != nil {
 		return fmt.Errorf("could not generate Beldex seed: %w", err)
 	}
-	fmt.Print("\n\n")
+	out.Blanks(2)
 	printPEMPhrase("25-WORD BELDEX (BDX) SEED", bdxSeed)
 
 	// 7. Brave 25-word seed phrase (24 brave-prefixed words + 25th word)
@@ -1646,11 +1640,11 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	if err != nil {
 		return fmt.Errorf("could not generate brave 25-word mnemonic: %w", err)
 	}
-	fmt.Print("\n\n")
+	out.Blanks(2)
 	printPEMPhrase("25-WORD BRAVE-SYNC", braveMnemonic)
 
 	// 2 empty lines after the last output
-	fmt.Print("\n\n")
+	out.Blanks(2)
 
 	return nil
 }
@@ -1719,17 +1713,6 @@ func formatPasswordError(err error) error {
 	// Return a simple error message (cobra may print this to stderr, but the styled
 	// version has already been shown)
 	return fmt.Errorf("keys are required to be password-protected")
-}
-
-func completeColor(truecolor, ansi256, ansi string) string {
-	//nolint: exhaustive
-	switch lipgloss.ColorProfile() {
-	case termenv.TrueColor:
-		return truecolor
-	case termenv.ANSI256:
-		return ansi256
-	}
-	return ansi
 }
 
 // setLanguage sets the language of the big39 mnemonic seed.
@@ -1930,16 +1913,16 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
 					}
 
-					fmt.Printf("[16 word seed phrase (%d-%02d)]\n", slot.year, int(slot.month))
-					fmt.Println()
-					fmt.Println(mnemonic)
+				out.Sectionf("16 word seed phrase (%d-%02d)", slot.year, int(slot.month))
+				out.Blank()
+				out.Sensitive(mnemonic)
 
-					legacySeed, legacyErr := seedify.ToMoneroLegacySeedFromPolyseed(mnemonic)
-					if legacyErr != nil {
-						return fmt.Errorf("failed to derive Monero legacy seed from polyseed (%d-%02d): %w", slot.year, int(slot.month), legacyErr)
-					}
-					fmt.Println(legacySeed)
-					fmt.Println()
+				legacySeed, legacyErr := seedify.ToMoneroLegacySeedFromPolyseed(mnemonic)
+				if legacyErr != nil {
+					return fmt.Errorf("failed to derive Monero legacy seed from polyseed (%d-%02d): %w", slot.year, int(slot.month), legacyErr)
+				}
+				out.Sensitive(legacySeed)
+				out.Blank()
 
 					if deriveXmr {
 						xmrKeys, xmrErr := seedify.DeriveMoneroKeys(mnemonic, 9) //nolint:mnd
@@ -1947,20 +1930,20 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 							return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", slot.year, int(slot.month), xmrErr)
 						}
 
-						fmt.Printf("[monero addresses from 16 word polyseed (%d-%02d)]\n", slot.year, int(slot.month))
-						fmt.Println()
-						fmt.Printf("%s (primary address)\n", xmrKeys.PrimaryAddress)
-						for j, subaddr := range xmrKeys.Subaddresses {
-							fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
-						}
-						fmt.Println()
+					out.Sectionf("monero addresses from 16 word polyseed (%d-%02d)", slot.year, int(slot.month))
+					out.Blank()
+					out.Field(xmrKeys.PrimaryAddress, "primary address")
+					for j, subaddr := range xmrKeys.Subaddresses {
+						out.SubField(subaddr, fmt.Sprintf("subaddress 0,%d", j+1))
 					}
+					out.Blank()
+				}
 
-					if deriveXmr || deriveXmrLegacy {
-						fmt.Println("[25 word monero legacy seed]")
-						fmt.Println()
-						fmt.Println(legacySeed)
-						fmt.Println()
+				if deriveXmr || deriveXmrLegacy {
+					out.Section("25 word monero legacy seed")
+					out.Blank()
+					out.Sensitive(legacySeed)
+					out.Blank()
 
 						if err := displayMoneroLegacyAddresses(legacySeed); err != nil {
 							return err
@@ -1974,10 +1957,10 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 				return fmt.Errorf("could not generate %d-word mnemonic: %w", count, mnErr)
 			}
 
-			fmt.Printf("[%d word seed phrase]\n", count)
-			fmt.Println()
-			fmt.Println(mnemonic)
-			fmt.Println()
+			out.Sectionf("%d word seed phrase", count)
+			out.Blank()
+			out.Sensitive(mnemonic)
+			out.Blank()
 
 			// Derive and display nostr keys for 12-word and 24-word seed phrases only
 			if deriveNostr && (count == 12 || count == 24) {
@@ -1986,13 +1969,13 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					return fmt.Errorf("failed to derive Nostr keys from %d-word mnemonic: %w", count, nErr)
 				}
 
-				fmt.Printf("[nostr keys from %d word seed]\n", count)
-				fmt.Println()
-				fmt.Printf("%s (nostr public key aka \"nostr user\")\n", nostrKeys.Npub)
-				fmt.Printf("└─ %s (hex)\n", nostrKeys.PubKeyHex)
-				fmt.Printf("%s (nostr secret key aka \"nostr pass\")\n", nostrKeys.Nsec)
-				fmt.Printf("└─ %s (hex)\n", nostrKeys.PrivKeyHex)
-				fmt.Println()
+				out.Sectionf("nostr keys from %d word seed", count)
+				out.Blank()
+				out.Field(nostrKeys.Npub, `nostr public key aka "nostr user"`)
+				out.TreeField(nostrKeys.PubKeyHex, "hex")
+				out.SensitiveField(nostrKeys.Nsec, `nostr secret key aka "nostr pass"`)
+				out.SensitiveTreeField(nostrKeys.PrivKeyHex, "hex")
+				out.Blank()
 			}
 
 			// Derive and display Bitcoin keys for 12 or 24-word seed phrase
@@ -2016,10 +1999,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Ethereum address from 24-word seed: %w", ethErr)
 					}
 
-					fmt.Printf("[ethereum address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(ethAddr)
-					fmt.Println()
+					out.AddressSection("ethereum address from 24 word seed", ethAddr)
 				}
 
 				// Zcash address (below Ethereum, shown when any crypto derivation is requested)
@@ -2029,10 +2009,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Zcash address from 24-word seed: %w", zErr)
 					}
 
-					fmt.Printf("[zcash address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(zcashAddr)
-					fmt.Println()
+					out.AddressSection("zcash address from 24 word seed", zcashAddr)
 				}
 
 				// Solana address
@@ -2042,10 +2019,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Solana address from 24-word seed: %w", solErr)
 					}
 
-					fmt.Printf("[solana address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(solAddr)
-					fmt.Println()
+					out.AddressSection("solana address from 24 word seed", solAddr)
 				}
 
 				// Tron address
@@ -2055,10 +2029,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Tron address from 24-word seed: %w", tErr)
 					}
 
-					fmt.Printf("[tron address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(tronAddr)
-					fmt.Println()
+					out.AddressSection("tron address from 24 word seed", tronAddr)
 				}
 
 				// EVM-compatible chain addresses (reuse Ethereum address)
@@ -2068,40 +2039,13 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive EVM address from 24-word seed: %w", evmErr)
 					}
 
-					fmt.Printf("[arbitrum address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(evmAddr)
-					fmt.Println()
-
-					fmt.Printf("[avalanche address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(evmAddr)
-					fmt.Println()
-
-					fmt.Printf("[base address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(evmAddr)
-					fmt.Println()
-
-					fmt.Printf("[bnbchain address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(evmAddr)
-					fmt.Println()
-
-					fmt.Printf("[cronos address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(evmAddr)
-					fmt.Println()
-
-					fmt.Printf("[optimism address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(evmAddr)
-					fmt.Println()
-
-					fmt.Printf("[polygon address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(evmAddr)
-					fmt.Println()
+					out.AddressSection("arbitrum address from 24 word seed", evmAddr)
+					out.AddressSection("avalanche address from 24 word seed", evmAddr)
+					out.AddressSection("base address from 24 word seed", evmAddr)
+					out.AddressSection("bnbchain address from 24 word seed", evmAddr)
+					out.AddressSection("cronos address from 24 word seed", evmAddr)
+					out.AddressSection("optimism address from 24 word seed", evmAddr)
+					out.AddressSection("polygon address from 24 word seed", evmAddr)
 				}
 
 				// Extra chains: only show when user requested at least one crypto derivation
@@ -2112,10 +2056,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Litecoin address from 24-word seed: %w", ltcErr)
 					}
 
-					fmt.Printf("[litecoin address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(ltcAddr)
-					fmt.Println()
+					out.AddressSection("litecoin address from 24 word seed", ltcAddr)
 
 					// Dogecoin address
 					dogeAddr, dogeErr := seedify.DeriveDogecoinAddress(mnemonic, "")
@@ -2123,10 +2064,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Dogecoin address from 24-word seed: %w", dogeErr)
 					}
 
-					fmt.Printf("[dogecoin address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(dogeAddr)
-					fmt.Println()
+					out.AddressSection("dogecoin address from 24 word seed", dogeAddr)
 
 					// Cosmos address
 					cosmosAddr, cosmosErr := seedify.DeriveCosmosAddress(mnemonic, "")
@@ -2134,10 +2072,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Cosmos address from 24-word seed: %w", cosmosErr)
 					}
 
-					fmt.Printf("[cosmos address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(cosmosAddr)
-					fmt.Println()
+					out.AddressSection("cosmos address from 24 word seed", cosmosAddr)
 
 					// Noble address
 					nobleAddr, nobleErr := seedify.DeriveNobleAddress(mnemonic, "")
@@ -2145,10 +2080,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Noble address from 24-word seed: %w", nobleErr)
 					}
 
-					fmt.Printf("[noble address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(nobleAddr)
-					fmt.Println()
+					out.AddressSection("noble address from 24 word seed", nobleAddr)
 
 					// Sui address
 					suiAddr, suiErr := seedify.DeriveSuiAddress(mnemonic, "")
@@ -2156,10 +2088,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Sui address from 24-word seed: %w", suiErr)
 					}
 
-					fmt.Printf("[sui address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(suiAddr)
-					fmt.Println()
+					out.AddressSection("sui address from 24 word seed", suiAddr)
 
 					// Stellar address
 					xlmAddr, xlmErr := seedify.DeriveStellarAddress(mnemonic, "")
@@ -2167,10 +2096,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Stellar address from 24-word seed: %w", xlmErr)
 					}
 
-					fmt.Printf("[stellar address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(xlmAddr)
-					fmt.Println()
+					out.AddressSection("stellar address from 24 word seed", xlmAddr)
 
 					// Ripple address
 					xrpAddr, xrpErr := seedify.DeriveRippleAddress(mnemonic, "")
@@ -2178,17 +2104,14 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("failed to derive Ripple address from 24-word seed: %w", xrpErr)
 					}
 
-					fmt.Printf("[ripple address from 24 word seed]\n")
-					fmt.Println()
-					fmt.Println(xrpAddr)
-					fmt.Println()
+					out.AddressSection("ripple address from 24 word seed", xrpAddr)
 				}
 			}
 		}
 
 		// Add blank line between word counts (except after the last one, unless brave is also shown)
 		if i < len(wordCounts)-1 || showBrave {
-			fmt.Println()
+			out.Blank()
 		}
 	}
 
@@ -2213,10 +2136,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 			return fmt.Errorf("could not generate brave 25-word mnemonic: %w", err)
 		}
 
-		fmt.Printf("[25 word brave seed phrase]\n")
-		fmt.Println()
-		fmt.Println(braveMnemonic)
-		fmt.Println()
+		out.SeedSection("25 word brave seed phrase", braveMnemonic)
 	}
 
 	return nil
@@ -2361,11 +2281,11 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 		return fmt.Errorf("failed to derive Bitcoin master extended keys: %w", err)
 	}
 
-	fmt.Printf("[bitcoin master extended keys from %d word seed]\n", wordCount)
-	fmt.Println()
-	fmt.Printf("%s (master xpub at m)\n", masterExtended.ExtendedPublicKey)
-	fmt.Printf("%s (master xprv at m)\n", masterExtended.ExtendedPrivateKey)
-	fmt.Println()
+	out.Sectionf("bitcoin master extended keys from %d word seed", wordCount)
+	out.Blank()
+	out.Field(masterExtended.ExtendedPublicKey, "master xpub at m")
+	out.SensitiveField(masterExtended.ExtendedPrivateKey, "master xprv at m")
+	out.Blank()
 
 	// === SINGLE-SIG ADDRESSES AND PRIVATE KEYS ===
 
@@ -2387,21 +2307,21 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 		return fmt.Errorf("failed to derive Bitcoin native SegWit keys: %w", err)
 	}
 
-	fmt.Printf("[bitcoin addresses from %d word seed]\n", wordCount)
-	fmt.Println()
-	fmt.Printf("%s (legacy P2PKH - BIP44 m/44'/0'/0'/0/0)\n", legacyKeys.Address)
-	fmt.Printf("%s (segwit P2SH-P2WPKH - BIP49 m/49'/0'/0'/0/0)\n", segwitKeys.Address)
-	fmt.Printf("%s (native segwit P2WPKH - BIP84 m/84'/0'/0'/0/0)\n", nativeKeys.Address)
-	fmt.Println()
+	out.Sectionf("bitcoin addresses from %d word seed", wordCount)
+	out.Blank()
+	out.Field(legacyKeys.Address, "legacy P2PKH - BIP44 m/44'/0'/0'/0/0")
+	out.Field(segwitKeys.Address, "segwit P2SH-P2WPKH - BIP49 m/49'/0'/0'/0/0")
+	out.Field(nativeKeys.Address, "native segwit P2WPKH - BIP84 m/84'/0'/0'/0/0")
+	out.Blank()
 
 	// === PRIVATE KEYS (WIF) ===
 
-	fmt.Printf("[bitcoin private keys from %d word seed]\n", wordCount)
-	fmt.Println()
-	fmt.Printf("%s (legacy P2PKH - BIP44)\n", legacyKeys.PrivateWIF)
-	fmt.Printf("%s (segwit P2SH-P2WPKH - BIP49)\n", segwitKeys.PrivateWIF)
-	fmt.Printf("%s (native segwit P2WPKH - BIP84)\n", nativeKeys.PrivateWIF)
-	fmt.Println()
+	out.Sectionf("bitcoin private keys from %d word seed", wordCount)
+	out.Blank()
+	out.SensitiveField(legacyKeys.PrivateWIF, "legacy P2PKH - BIP44")
+	out.SensitiveField(segwitKeys.PrivateWIF, "segwit P2SH-P2WPKH - BIP49")
+	out.SensitiveField(nativeKeys.PrivateWIF, "native segwit P2WPKH - BIP84")
+	out.Blank()
 
 	// === ACCOUNT-LEVEL EXTENDED KEYS ===
 	// These are derived to the account level for each BIP standard
@@ -2425,19 +2345,19 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 		return fmt.Errorf("failed to derive Bitcoin native SegWit extended keys: %w", err)
 	}
 
-	fmt.Printf("[bitcoin account extended public keys from %d word seed]\n", wordCount)
-	fmt.Println()
-	fmt.Printf("%s (legacy account xpub - BIP44 m/44'/0'/0')\n", legacyExtended.ExtendedPublicKey)
-	fmt.Printf("%s (segwit account ypub - BIP49 m/49'/0'/0')\n", segwitExtended.ExtendedPublicKey)
-	fmt.Printf("%s (native segwit account zpub - BIP84 m/84'/0'/0')\n", nativeExtended.ExtendedPublicKey)
-	fmt.Println()
+	out.Sectionf("bitcoin account extended public keys from %d word seed", wordCount)
+	out.Blank()
+	out.Field(legacyExtended.ExtendedPublicKey, "legacy account xpub - BIP44 m/44'/0'/0'")
+	out.Field(segwitExtended.ExtendedPublicKey, "segwit account ypub - BIP49 m/49'/0'/0'")
+	out.Field(nativeExtended.ExtendedPublicKey, "native segwit account zpub - BIP84 m/84'/0'/0'")
+	out.Blank()
 
-	fmt.Printf("[bitcoin account extended private keys from %d word seed]\n", wordCount)
-	fmt.Println()
-	fmt.Printf("%s (legacy account xprv - BIP44 m/44'/0'/0')\n", legacyExtended.ExtendedPrivateKey)
-	fmt.Printf("%s (segwit account yprv - BIP49 m/49'/0'/0')\n", segwitExtended.ExtendedPrivateKey)
-	fmt.Printf("%s (native segwit account zprv - BIP84 m/84'/0'/0')\n", nativeExtended.ExtendedPrivateKey)
-	fmt.Println()
+	out.Sectionf("bitcoin account extended private keys from %d word seed", wordCount)
+	out.Blank()
+	out.SensitiveField(legacyExtended.ExtendedPrivateKey, "legacy account xprv - BIP44 m/44'/0'/0'")
+	out.SensitiveField(segwitExtended.ExtendedPrivateKey, "segwit account yprv - BIP49 m/49'/0'/0'")
+	out.SensitiveField(nativeExtended.ExtendedPrivateKey, "native segwit account zprv - BIP84 m/84'/0'/0'")
+	out.Blank()
 
 	// === MULTISIG 1-OF-1 ADDRESSES AND PRIVATE KEYS ===
 
@@ -2465,25 +2385,25 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 		return fmt.Errorf("failed to derive PayNym: %w", err)
 	}
 
-	fmt.Printf("[bitcoin PayNym (BIP47) from %d word seed]\n", wordCount)
-	fmt.Println()
-	fmt.Printf("%s (payment code - BIP47 m/47'/0'/0')\n", payNymKeys.PaymentCode)
-	fmt.Printf("%s (notification address - m/47'/0'/0'/0)\n", payNymKeys.NotificationAddress)
-	fmt.Println()
+	out.Sectionf("bitcoin PayNym (BIP47) from %d word seed", wordCount)
+	out.Blank()
+	out.Field(payNymKeys.PaymentCode, "payment code - BIP47 m/47'/0'/0'")
+	out.Field(payNymKeys.NotificationAddress, "notification address - m/47'/0'/0'/0")
+	out.Blank()
 
-	fmt.Printf("[bitcoin multisig 1-of-1 addresses from %d word seed]\n", wordCount)
-	fmt.Println()
-	fmt.Printf("%s (legacy P2SH - BIP48 m/48'/0'/0'/0'/0/0)\n", multisigLegacyKeys.Address)
-	fmt.Printf("%s (segwit P2SH-P2WSH - BIP48 m/48'/0'/0'/1'/0/0)\n", multisigSegwitKeys.Address)
-	fmt.Printf("%s (native segwit P2WSH - BIP48 m/48'/0'/0'/2'/0/0)\n", multisigNativeKeys.Address)
-	fmt.Println()
+	out.Sectionf("bitcoin multisig 1-of-1 addresses from %d word seed", wordCount)
+	out.Blank()
+	out.Field(multisigLegacyKeys.Address, "legacy P2SH - BIP48 m/48'/0'/0'/0'/0/0")
+	out.Field(multisigSegwitKeys.Address, "segwit P2SH-P2WSH - BIP48 m/48'/0'/0'/1'/0/0")
+	out.Field(multisigNativeKeys.Address, "native segwit P2WSH - BIP48 m/48'/0'/0'/2'/0/0")
+	out.Blank()
 
-	fmt.Printf("[bitcoin multisig 1-of-1 private keys from %d word seed]\n", wordCount)
-	fmt.Println()
-	fmt.Printf("%s (legacy P2SH - BIP48)\n", multisigLegacyKeys.PrivateWIF)
-	fmt.Printf("%s (segwit P2SH-P2WSH - BIP48)\n", multisigSegwitKeys.PrivateWIF)
-	fmt.Printf("%s (native segwit P2WSH - BIP48)\n", multisigNativeKeys.PrivateWIF)
-	fmt.Println()
+	out.Sectionf("bitcoin multisig 1-of-1 private keys from %d word seed", wordCount)
+	out.Blank()
+	out.SensitiveField(multisigLegacyKeys.PrivateWIF, "legacy P2SH - BIP48")
+	out.SensitiveField(multisigSegwitKeys.PrivateWIF, "segwit P2SH-P2WSH - BIP48")
+	out.SensitiveField(multisigNativeKeys.PrivateWIF, "native segwit P2WSH - BIP48")
+	out.Blank()
 
 	// === MULTISIG ACCOUNT-LEVEL EXTENDED KEYS ===
 
@@ -2505,23 +2425,23 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 		return fmt.Errorf("failed to derive Bitcoin multisig native SegWit extended keys: %w", err)
 	}
 
-	fmt.Printf("[bitcoin multisig 1-of-1 account extended public keys from %d word seed]\n", wordCount)
-	fmt.Println()
-	fmt.Printf("%s (legacy account xpub - BIP48 m/48'/0'/0'/0')\n", multisigLegacyExtended.ExtendedPublicKey)
-	fmt.Printf("%s (segwit account Ypub - BIP48 m/48'/0'/0'/1')\n", multisigSegwitExtended.ExtendedPublicKey)
-	fmt.Printf("└─ %s (xpub)\n", multisigSegwitExtended.StandardPublicKey)
-	fmt.Printf("%s (native segwit account Zpub - BIP48 m/48'/0'/0'/2')\n", multisigNativeExtended.ExtendedPublicKey)
-	fmt.Printf("└─ %s (xpub)\n", multisigNativeExtended.StandardPublicKey)
-	fmt.Println()
+	out.Sectionf("bitcoin multisig 1-of-1 account extended public keys from %d word seed", wordCount)
+	out.Blank()
+	out.Field(multisigLegacyExtended.ExtendedPublicKey, "legacy account xpub - BIP48 m/48'/0'/0'/0")
+	out.Field(multisigSegwitExtended.ExtendedPublicKey, "segwit account Ypub - BIP48 m/48'/0'/0'/1")
+	out.TreeField(multisigSegwitExtended.StandardPublicKey, "xpub")
+	out.Field(multisigNativeExtended.ExtendedPublicKey, "native segwit account Zpub - BIP48 m/48'/0'/0'/2")
+	out.TreeField(multisigNativeExtended.StandardPublicKey, "xpub")
+	out.Blank()
 
-	fmt.Printf("[bitcoin multisig 1-of-1 account extended private keys from %d word seed]\n", wordCount)
-	fmt.Println()
-	fmt.Printf("%s (legacy account xprv - BIP48 m/48'/0'/0'/0')\n", multisigLegacyExtended.ExtendedPrivateKey)
-	fmt.Printf("%s (segwit account Yprv - BIP48 m/48'/0'/0'/1')\n", multisigSegwitExtended.ExtendedPrivateKey)
-	fmt.Printf("└─ %s (xprv)\n", multisigSegwitExtended.StandardPrivateKey)
-	fmt.Printf("%s (native segwit account Zprv - BIP48 m/48'/0'/0'/2')\n", multisigNativeExtended.ExtendedPrivateKey)
-	fmt.Printf("└─ %s (xprv)\n", multisigNativeExtended.StandardPrivateKey)
-	fmt.Println()
+	out.Sectionf("bitcoin multisig 1-of-1 account extended private keys from %d word seed", wordCount)
+	out.Blank()
+	out.SensitiveField(multisigLegacyExtended.ExtendedPrivateKey, "legacy account xprv - BIP48 m/48'/0'/0'/0")
+	out.SensitiveField(multisigSegwitExtended.ExtendedPrivateKey, "segwit account Yprv - BIP48 m/48'/0'/0'/1")
+	out.SensitiveTreeField(multisigSegwitExtended.StandardPrivateKey, "xprv")
+	out.SensitiveField(multisigNativeExtended.ExtendedPrivateKey, "native segwit account Zprv - BIP48 m/48'/0'/0'/2")
+	out.SensitiveTreeField(multisigNativeExtended.StandardPrivateKey, "xprv")
+	out.Blank()
 
 	return nil
 }
@@ -2534,10 +2454,7 @@ func displayMoneroLegacyOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase st
 		return fmt.Errorf("failed to derive Monero legacy seed: %w", legacyErr)
 	}
 
-	fmt.Println("[25 word monero legacy seed]")
-	fmt.Println()
-	fmt.Println(legacySeed)
-	fmt.Println()
+	out.SeedSection("25 word monero legacy seed", legacySeed)
 
 	return displayMoneroLegacyAddresses(legacySeed)
 }
@@ -2549,13 +2466,13 @@ func displayMoneroLegacyAddresses(legacySeed string) error {
 		return fmt.Errorf("failed to derive Monero keys from legacy seed: %w", legacyKErr)
 	}
 
-	fmt.Println("[monero addresses from 25 word legacy seed]")
-	fmt.Println()
-	fmt.Printf("%s (primary address)\n", legacyKeys.PrimaryAddress)
+	out.Section("monero addresses from 25 word legacy seed")
+	out.Blank()
+	out.Field(legacyKeys.PrimaryAddress, "primary address")
 	for j, subaddr := range legacyKeys.Subaddresses {
-		fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
+		out.SubField(subaddr, fmt.Sprintf("subaddress 0,%d", j+1))
 	}
-	fmt.Println()
+	out.Blank()
 	return nil
 }
 
@@ -2570,7 +2487,7 @@ func displayKeyPreamble(ed25519Key *ed25519.PrivateKey, bts []byte, seedPassphra
 		return fmt.Errorf("could not derive Nostr keys for key comment: %w", nkErr)
 	}
 
-	fmt.Print("\n\n")
+	out.Blanks(2)
 	if err := printSSHKeyPair(ed25519Key, bts, nostrKeys.Npub); err != nil {
 		return err
 	}
@@ -2579,17 +2496,19 @@ func displayKeyPreamble(ed25519Key *ed25519.PrivateKey, bts []byte, seedPassphra
 	if onionErr != nil {
 		return fmt.Errorf("could not derive Tor v3 hidden service keys: %w", onionErr)
 	}
-	fmt.Printf("\n-----BEGIN TOR ONION ADDRESS-----\n%s\n-----END TOR ONION ADDRESS-----\n", onionKeys.OnionAddress)
+	out.PEMBlockPrefixed(1, "TOR ONION ADDRESS", onionKeys.OnionAddress, false)
 
 	i2pKeys, i2pErr := seedify.DeriveI2PDestinationKeys(ed25519Key)
 	if i2pErr != nil {
 		return fmt.Errorf("could not derive I2P destination keys: %w", i2pErr)
 	}
-	fmt.Printf("\n-----BEGIN I2P DESTINATION-----\n")
-	fmt.Printf("B32 Address  : %s\n", i2pKeys.B32Address)
-	fmt.Printf("X25519 PrivKey (hex): %x\n", i2pKeys.X25519PrivKey)
-	fmt.Printf("Ed25519 Seed  (hex): %x\n", i2pKeys.Ed25519Seed)
-	fmt.Printf("-----END I2P DESTINATION-----\n\n")
+	out.Blanks(1)
+	out.LabeledBlock("I2P DESTINATION", []string{
+		"B32 Address  : " + i2pKeys.B32Address,
+		fmt.Sprintf("X25519 PrivKey (hex): %x", i2pKeys.X25519PrivKey),
+		fmt.Sprintf("Ed25519 Seed  (hex): %x", i2pKeys.Ed25519Seed),
+	})
+	out.Blank()
 	return nil
 }
 
@@ -2601,23 +2520,20 @@ func displayBeldexOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase string) 
 		return fmt.Errorf("failed to derive Beldex seed: %w", bdxSeedErr)
 	}
 
-	fmt.Println("[25 word beldex (bdx) seed]")
-	fmt.Println()
-	fmt.Println(bdxSeed)
-	fmt.Println()
+	out.SeedSection("25 word beldex (bdx) seed", bdxSeed)
 
 	bdxKeys, bdxKErr := seedify.DeriveBeldexKeysFromLegacySeed(bdxSeed, 9) //nolint:mnd
 	if bdxKErr != nil {
 		return fmt.Errorf("failed to derive Beldex keys from legacy seed: %w", bdxKErr)
 	}
 
-	fmt.Println("[beldex addresses from 25 word seed]")
-	fmt.Println()
-	fmt.Printf("%s (primary address)\n", bdxKeys.PrimaryAddress)
+	out.Section("beldex addresses from 25 word seed")
+	out.Blank()
+	out.Field(bdxKeys.PrimaryAddress, "primary address")
 	for j, subaddr := range bdxKeys.Subaddresses {
-		fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
+		out.SubField(subaddr, fmt.Sprintf("subaddress 0,%d", j+1))
 	}
-	fmt.Println()
+	out.Blank()
 	return nil
 }
 
