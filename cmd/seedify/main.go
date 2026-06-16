@@ -87,6 +87,7 @@ var (
 	deriveKeyToDKIM          bool
 	deriveKeyToOnion         bool
 	deriveKeyToI2P           bool
+	deriveKeyToWireGuard     bool
 	deriveKeyPKCS8           bool
 	deriveKeyToPGP           bool
 	deriveKeyPGPName         string
@@ -182,6 +183,11 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				return errors.New("--to-i2p cannot be combined with --to-rsa, --to-dkim, --to-pgp, or --to-onion")
 			}
 
+			// --to-wireguard is mutually exclusive with all other derivation modes.
+			if deriveKeyToWireGuard && (deriveKeyToRSA || deriveKeyToDKIM || deriveKeyToPGP || deriveKeyToOnion || deriveKeyToI2P) {
+				return errors.New("--to-wireguard cannot be combined with --to-rsa, --to-dkim, --to-pgp, --to-onion, or --to-i2p")
+			}
+
 			// --pgp-name and --pgp-email are both required when --to-pgp is set.
 			if deriveKeyToPGP && deriveKeyPGPName == "" {
 				return errors.New("--pgp-name is required with --to-pgp")
@@ -198,6 +204,11 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			// Handle --to-i2p: derive an I2P Destination from the Ed25519 key.
 			if deriveKeyToI2P {
 				return runDeriveI2PKey(keyPath)
+			}
+
+			// Handle --to-wireguard: derive a WireGuard keypair from the Ed25519 key.
+			if deriveKeyToWireGuard {
+				return runDeriveWireGuardKey(keyPath)
 			}
 
 			// Handle --to-rsa: derive an RSA key from the Ed25519 key and write to disk (or stdout).
@@ -512,6 +523,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToDKIM, "to-dkim", false, "Derive a DKIM RSA keypair from the input Ed25519 key; when --dkim-domain is set, writes config/dkim/<domain>/<selector>.private and .public automatically")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToOnion, "to-onion", false, "Derive a Tor v3 hidden service identity from the input Ed25519 key; use --output <dir> to write the Tor key files")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToI2P, "to-i2p", false, "Derive an I2P Destination (Ed25519 signing + X25519 encryption) from the input Ed25519 key; use --output <dir> to write the keys.dat file")
+	rootCmd.PersistentFlags().BoolVar(&deriveKeyToWireGuard, "to-wireguard", false, "Derive a WireGuard static keypair from the input Ed25519 key; prints private and public keys in base64 (wg format)")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyPKCS8, "openssl-compatible", false, "Write an encrypted PKCS#8 PEM file instead of OpenSSH format (used with --to-rsa; compatible with openssl pkey -check)")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToPGP, "to-pgp", false, "Derive an OpenPGP RSA keypair and write an ASCII-armored secret key (.asc) to --output")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyPGPName, "pgp-name", "", "Full name for the OpenPGP UID, e.g. Alice (used with --to-pgp)")
@@ -998,6 +1010,50 @@ func runDeriveI2PKey(keyPath string) error {
 	fmt.Fprintf(os.Stderr, "B32 address: %s\n", i2pKeys.B32Address)
 	fmt.Fprintf(os.Stderr, "File written to: %s\n", keysPath)
 
+	return nil
+}
+
+// runDeriveWireGuardKey handles --to-wireguard: derives a WireGuard static
+// keypair from the source Ed25519 key and prints both keys in base64 (the
+// format expected by wg(8)).
+func runDeriveWireGuardKey(keyPath string) error {
+	f, err := openFileOrStdin(keyPath)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	bts, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+
+	key, err := parsePrivateKey(bts, nil)
+	if err != nil && isPasswordError(err) {
+		pass, passErr := askKeyPassphrase(keyPath)
+		if passErr != nil {
+			return passErr
+		}
+		key, err = parsePrivateKey(bts, pass)
+		if err != nil {
+			return fmt.Errorf("could not parse key with passphrase: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("could not parse key: %w", err)
+	}
+
+	ed25519Key, ok := key.(*ed25519.PrivateKey)
+	if !ok {
+		return unsupportedKeyTypeError(key)
+	}
+
+	wgKeys, deriveErr := seedify.DeriveWireGuardKeys(ed25519Key)
+	if deriveErr != nil {
+		return fmt.Errorf("could not derive WireGuard keys: %w", deriveErr)
+	}
+
+	fmt.Printf("PrivateKey = %s\n", wgKeys.PrivateKey)
+	fmt.Printf("PublicKey  = %s\n", wgKeys.PublicKey)
 	return nil
 }
 

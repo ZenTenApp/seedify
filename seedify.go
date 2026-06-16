@@ -3825,3 +3825,45 @@ func DeriveI2PDestinationKeys(key *ed25519.PrivateKey) (*I2PDestinationKeys, err
 		Ed25519Seed:      signSubSeed[:],
 	}, nil
 }
+
+// WireGuardKeys holds a WireGuard static key pair.
+type WireGuardKeys struct {
+	// PrivateKey is the 32-byte clamped Curve25519 scalar, base64-encoded
+	// (the format produced by `wg genkey`).
+	PrivateKey string
+	// PublicKey is the corresponding Curve25519 public key, base64-encoded
+	// (the format produced by `wg pubkey`).
+	PublicKey string
+}
+
+// DeriveWireGuardKeys deterministically derives a WireGuard static key pair
+// from an Ed25519 SSH private key. The derivation:
+//
+//	SHA-256("seedify:wireguard:" || seed) → clamp → Curve25519 private key
+//
+// The resulting keys are interchangeable with those produced by `wg genkey` /
+// `wg pubkey` and can be placed directly in a WireGuard [Interface] or [Peer]
+// config section.
+func DeriveWireGuardKeys(key *ed25519.PrivateKey) (*WireGuardKeys, error) {
+	label := []byte("seedify:wireguard:")
+	input := make([]byte, len(label)+len(key.Seed()))
+	copy(input, label)
+	copy(input[len(label):], key.Seed())
+	digest := sha256.Sum256(input)
+
+	// Clamp per RFC 7748 §5.
+	privScalar := digest
+	privScalar[0] &= 248
+	privScalar[31] &= 127
+	privScalar[31] |= 64
+
+	pubKey, err := curve25519.X25519(privScalar[:], curve25519.Basepoint)
+	if err != nil {
+		return nil, fmt.Errorf("wireguard: public key derivation failed: %w", err)
+	}
+
+	return &WireGuardKeys{
+		PrivateKey: base64.StdEncoding.EncodeToString(privScalar[:]),
+		PublicKey:  base64.StdEncoding.EncodeToString(pubKey),
+	}, nil
+}

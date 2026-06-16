@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"strings"
 	"testing"
@@ -1817,4 +1818,80 @@ func TestDeriveDKIMKeypair_InvalidBits(t *testing.T) {
 		_, bitsErr := DeriveDKIMKeypair(&key, "mail", bits)
 		is.True(bitsErr != nil)
 	}
+}
+
+// TestDeriveWireGuardKeys_Format verifies private and public keys are valid base64-encoded 32-byte values.
+func TestDeriveWireGuardKeys_Format(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	wg, err := DeriveWireGuardKeys(&key)
+	is.NoErr(err)
+
+	privBytes, err := base64.StdEncoding.DecodeString(wg.PrivateKey)
+	is.NoErr(err)
+	is.Equal(len(privBytes), 32)
+
+	pubBytes, err := base64.StdEncoding.DecodeString(wg.PublicKey)
+	is.NoErr(err)
+	is.Equal(len(pubBytes), 32)
+}
+
+// TestDeriveWireGuardKeys_Deterministic verifies the same key always produces the same WireGuard keys.
+func TestDeriveWireGuardKeys_Deterministic(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	wg1, err := DeriveWireGuardKeys(&key)
+	is.NoErr(err)
+
+	wg2, err := DeriveWireGuardKeys(&key)
+	is.NoErr(err)
+
+	is.Equal(wg1.PrivateKey, wg2.PrivateKey)
+	is.Equal(wg1.PublicKey, wg2.PublicKey)
+}
+
+// TestDeriveWireGuardKeys_Distinct verifies different SSH keys produce different WireGuard keys.
+func TestDeriveWireGuardKeys_Distinct(t *testing.T) {
+	is := is.New(t)
+
+	_, key1, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	_, key2, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	wg1, err := DeriveWireGuardKeys(&key1)
+	is.NoErr(err)
+
+	wg2, err := DeriveWireGuardKeys(&key2)
+	is.NoErr(err)
+
+	is.True(wg1.PrivateKey != wg2.PrivateKey)
+	is.True(wg1.PublicKey != wg2.PublicKey)
+}
+
+// TestDeriveWireGuardKeys_PrivateKeyClamping verifies the private key scalar is correctly clamped per RFC 7748.
+func TestDeriveWireGuardKeys_PrivateKeyClamping(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	wg, err := DeriveWireGuardKeys(&key)
+	is.NoErr(err)
+
+	privBytes, err := base64.StdEncoding.DecodeString(wg.PrivateKey)
+	is.NoErr(err)
+
+	// Low 3 bits of first byte must be 0.
+	is.Equal(privBytes[0]&7, byte(0))
+	// Bit 7 of last byte must be 0, bit 6 must be 1.
+	is.Equal(privBytes[31]&128, byte(0))
+	is.Equal(privBytes[31]&64, byte(64))
 }
