@@ -611,6 +611,57 @@ func allPolyseedMonths() []yearMonth {
 	return out
 }
 
+// polyseedDayGroup holds a unique 16-word polyseed mnemonic together with the
+// inclusive calendar-day range over which that mnemonic is produced.  Because
+// the polyseed birthday has a resolution of ~30.44 days, consecutive days that
+// fall within the same birthday step yield identical mnemonics and are merged
+// into a single group.
+type polyseedDayGroup struct {
+	mnemonic   string
+	legacySeed string
+	startDate  time.Time
+	endDate    time.Time
+}
+
+// groupPolyseedsByDay generates the 16-word polyseed for every calendar day
+// from the Polyseed epoch (1 Nov 2021, 00:00 UTC) through today, groups
+// consecutive days that produce an identical mnemonic, and returns the groups
+// in chronological order.
+func groupPolyseedsByDay(ed25519Key *ed25519.PrivateKey, seedPassphrase string) ([]polyseedDayGroup, error) {
+	const epochYear, epochMonth, epochDay = 2021, time.November, 1
+	now := time.Now().UTC()
+	start := time.Date(epochYear, epochMonth, epochDay, 0, 0, 0, 0, time.UTC)
+
+	var groups []polyseedDayGroup
+	var prevMnemonic string
+
+	for current := start; !current.After(now); current = current.AddDate(0, 0, 1) {
+		birthday := uint64(current.Unix()) //nolint:gosec
+		mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthday) //nolint:mnd
+		if mnErr != nil {
+			return nil, fmt.Errorf("could not generate polyseed for %s: %w", current.Format("2006-01-02"), mnErr)
+		}
+
+		if mnemonic != prevMnemonic {
+			legacySeed, lErr := seedify.ToMoneroLegacySeedFromPolyseed(mnemonic)
+			if lErr != nil {
+				return nil, fmt.Errorf("could not derive legacy seed for %s: %w", current.Format("2006-01-02"), lErr)
+			}
+			groups = append(groups, polyseedDayGroup{
+				mnemonic:   mnemonic,
+				legacySeed: legacySeed,
+				startDate:  current,
+				endDate:    current,
+			})
+			prevMnemonic = mnemonic
+		} else {
+			groups[len(groups)-1].endDate = current
+		}
+	}
+
+	return groups, nil
+}
+
 // runDeriveKey is the handler for --to-rsa.
 // It parses the source Ed25519 key, derives an RSA key, prompts for a
 // passphrase, and writes the result as either:
@@ -1505,11 +1556,25 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	fmt.Print("\n\n")
 	printPEMPhrase("12-WORD SEED PHRASE", mnemonic12)
 
-	// 2. 16-word seed phrases (Polyseed) — one per slot
-	var slots16 []yearMonth
+	// 2. 16-word seed phrases (Polyseed).
+	// When --all-polyseeds is set, iterate every calendar day from the epoch
+	// and emit one PEM block per unique mnemonic, labelled with its date range.
+	// Otherwise emit one block per (year, month) slot as before.
 	if polyseedAll {
-		slots16 = allPolyseedMonths()
+		dayGroups16, dgErr := groupPolyseedsByDay(ed25519Key, seedPassphrase)
+		if dgErr != nil {
+			return dgErr
+		}
+		for _, g := range dayGroups16 {
+			label := fmt.Sprintf("16-WORD POLYSEED (%s → %s)",
+				g.startDate.Format("2006-01-02"),
+				g.endDate.Format("2006-01-02"),
+			)
+			fmt.Print("\n\n")
+			printPEMPhrase(label, g.mnemonic)
+		}
 	} else {
+		var slots16 []yearMonth
 		years, yErr := getPolyseedYears()
 		if yErr != nil {
 			return fmt.Errorf("invalid --polyseed-year: %w", yErr)
@@ -1521,14 +1586,14 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 		for _, y := range years {
 			slots16 = append(slots16, yearMonth{year: y, month: month})
 		}
-	}
-	for _, slot := range slots16 {
-		mnemonic16, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(slot.year, slot.month)) //nolint:mnd
-		if mnErr != nil {
-			return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
+		for _, slot := range slots16 {
+			mnemonic16, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(slot.year, slot.month)) //nolint:mnd
+			if mnErr != nil {
+				return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
+			}
+			fmt.Print("\n\n")
+			printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(slot.month), slot.year), mnemonic16)
 		}
-		fmt.Print("\n\n")
-		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(slot.month), slot.year), mnemonic16)
 	}
 
 	// 3. 24-word seed phrase (standard, no prefix)
@@ -1794,50 +1859,97 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 
 	// Generate and display outputs for each word count
 	for i, count := range wordCounts {
-		// For 16-word polyseed, generate one mnemonic per (year, month) slot.
-		// Each slot shows the 16-word phrase plus its corresponding 25-word legacy
-		// encoding, then optional Monero address sections when --xmr is set.
+		// For 16-word polyseed: when --all-polyseeds is set, iterate every
+		// calendar day from the epoch and group consecutive days that produce
+		// the same mnemonic, printing each unique mnemonic alongside its date
+		// range.  Without --all-polyseeds, generate one mnemonic per
+		// (year, month) slot as before.
 		if count == 16 { //nolint:mnd,nestif
-			for _, slot := range polyseedSlots {
-				mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(slot.year, slot.month)) //nolint:mnd
-				if mnErr != nil {
-					return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
+			if polyseedAll {
+				dayGroups, dgErr := groupPolyseedsByDay(ed25519Key, seedPassphrase)
+				if dgErr != nil {
+					return dgErr
 				}
+				for _, g := range dayGroups {
+					fmt.Printf("[16 word seed phrase (%s → %s)]\n",
+						g.startDate.Format("2006-01-02"),
+						g.endDate.Format("2006-01-02"),
+					)
+					fmt.Println()
+					fmt.Println(g.mnemonic)
+					fmt.Println(g.legacySeed)
+					fmt.Println()
 
-				fmt.Printf("[16 word seed phrase (%d-%02d)]\n", slot.year, int(slot.month))
-				fmt.Println()
-				fmt.Println(mnemonic)
+					if deriveXmr {
+						xmrKeys, xmrErr := seedify.DeriveMoneroKeys(g.mnemonic, 9) //nolint:mnd
+						if xmrErr != nil {
+							return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%s → %s): %w",
+								g.startDate.Format("2006-01-02"), g.endDate.Format("2006-01-02"), xmrErr)
+						}
 
-				legacySeed, legacyErr := seedify.ToMoneroLegacySeedFromPolyseed(mnemonic)
-				if legacyErr != nil {
-					return fmt.Errorf("failed to derive Monero legacy seed from polyseed (%d-%02d): %w", slot.year, int(slot.month), legacyErr)
-				}
-				fmt.Println(legacySeed)
-				fmt.Println()
-
-				if deriveXmr {
-					xmrKeys, xmrErr := seedify.DeriveMoneroKeys(mnemonic, 9) //nolint:mnd
-					if xmrErr != nil {
-						return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", slot.year, int(slot.month), xmrErr)
+						fmt.Printf("[monero addresses from 16 word polyseed (%s → %s)]\n",
+							g.startDate.Format("2006-01-02"), g.endDate.Format("2006-01-02"))
+						fmt.Println()
+						fmt.Printf("%s (primary address)\n", xmrKeys.PrimaryAddress)
+						for j, subaddr := range xmrKeys.Subaddresses {
+							fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
+						}
+						fmt.Println()
 					}
 
-					fmt.Printf("[monero addresses from 16 word polyseed (%d-%02d)]\n", slot.year, int(slot.month))
-					fmt.Println()
-					fmt.Printf("%s (primary address)\n", xmrKeys.PrimaryAddress)
-					for j, subaddr := range xmrKeys.Subaddresses {
-						fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
-					}
-					fmt.Println()
-				}
+					if deriveXmr || deriveXmrLegacy {
+						fmt.Println("[25 word monero legacy seed]")
+						fmt.Println()
+						fmt.Println(g.legacySeed)
+						fmt.Println()
 
-				if deriveXmr || deriveXmrLegacy {
-					fmt.Println("[25 word monero legacy seed]")
+						if err := displayMoneroLegacyAddresses(g.legacySeed); err != nil {
+							return err
+						}
+					}
+				}
+			} else {
+				for _, slot := range polyseedSlots {
+					mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(slot.year, slot.month)) //nolint:mnd
+					if mnErr != nil {
+						return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
+					}
+
+					fmt.Printf("[16 word seed phrase (%d-%02d)]\n", slot.year, int(slot.month))
 					fmt.Println()
+					fmt.Println(mnemonic)
+
+					legacySeed, legacyErr := seedify.ToMoneroLegacySeedFromPolyseed(mnemonic)
+					if legacyErr != nil {
+						return fmt.Errorf("failed to derive Monero legacy seed from polyseed (%d-%02d): %w", slot.year, int(slot.month), legacyErr)
+					}
 					fmt.Println(legacySeed)
 					fmt.Println()
 
-					if err := displayMoneroLegacyAddresses(legacySeed); err != nil {
-						return err
+					if deriveXmr {
+						xmrKeys, xmrErr := seedify.DeriveMoneroKeys(mnemonic, 9) //nolint:mnd
+						if xmrErr != nil {
+							return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", slot.year, int(slot.month), xmrErr)
+						}
+
+						fmt.Printf("[monero addresses from 16 word polyseed (%d-%02d)]\n", slot.year, int(slot.month))
+						fmt.Println()
+						fmt.Printf("%s (primary address)\n", xmrKeys.PrimaryAddress)
+						for j, subaddr := range xmrKeys.Subaddresses {
+							fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
+						}
+						fmt.Println()
+					}
+
+					if deriveXmr || deriveXmrLegacy {
+						fmt.Println("[25 word monero legacy seed]")
+						fmt.Println()
+						fmt.Println(legacySeed)
+						fmt.Println()
+
+						if err := displayMoneroLegacyAddresses(legacySeed); err != nil {
+							return err
+						}
 					}
 				}
 			}
