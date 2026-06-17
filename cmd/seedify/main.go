@@ -636,7 +636,7 @@ func groupPolyseedsByDay(ed25519Key *ed25519.PrivateKey, seedPassphrase string) 
 	var prevMnemonic string
 
 	for current := start; !current.After(now); current = current.AddDate(0, 0, 1) {
-		birthday := uint64(current.Unix()) //nolint:gosec
+		birthday := uint64(current.Unix())                                                               //nolint:gosec
 		mnemonic, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthday) //nolint:mnd
 		if mnErr != nil {
 			return nil, fmt.Errorf("could not generate polyseed for %s: %w", current.Format("2006-01-02"), mnErr)
@@ -1483,6 +1483,53 @@ func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte, npub 
 	return nil
 }
 
+func printAllPolyseedPhrases(ed25519Key *ed25519.PrivateKey, seedPassphrase string) error {
+	dayGroups16, err := groupPolyseedsByDay(ed25519Key, seedPassphrase)
+	if err != nil {
+		return err
+	}
+	for _, group := range dayGroups16 {
+		label := fmt.Sprintf("16-WORD POLYSEED (%s → %s)",
+			group.startDate.Format("2006-01-02"),
+			group.endDate.Format("2006-01-02"),
+		)
+		fmt.Print("\n\n")
+		printPEMPhrase(label, group.mnemonic)
+	}
+	return nil
+}
+
+func printMonthlyPolyseedPhrases(ed25519Key *ed25519.PrivateKey, seedPassphrase string) error {
+	var slots16 []yearMonth
+	years, err := getPolyseedYears()
+	if err != nil {
+		return fmt.Errorf("invalid --polyseed-year: %w", err)
+	}
+	month, err := getPolyseedMonth()
+	if err != nil {
+		return fmt.Errorf("invalid --polyseed-month: %w", err)
+	}
+	for _, year := range years {
+		slots16 = append(slots16, yearMonth{year: year, month: month})
+	}
+	for _, slot := range slots16 {
+		mnemonic16, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(slot.year, slot.month)) //nolint:mnd
+		if mnErr != nil {
+			return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
+		}
+		fmt.Print("\n\n")
+		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(slot.month), slot.year), mnemonic16)
+	}
+	return nil
+}
+
+func printPolyseedPhrases(ed25519Key *ed25519.PrivateKey, seedPassphrase string) error {
+	if polyseedAll {
+		return printAllPolyseedPhrases(ed25519Key, seedPassphrase)
+	}
+	return printMonthlyPolyseedPhrases(ed25519Key, seedPassphrase)
+}
+
 // generatePhrasesOutput generates a curated set of seed phrases from the SSH key.
 // It prints the following phrases in order:
 //  1. 12-word BIP39 seed phrase
@@ -1560,40 +1607,8 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	// When --all-polyseeds is set, iterate every calendar day from the epoch
 	// and emit one PEM block per unique mnemonic, labelled with its date range.
 	// Otherwise emit one block per (year, month) slot as before.
-	if polyseedAll {
-		dayGroups16, dgErr := groupPolyseedsByDay(ed25519Key, seedPassphrase)
-		if dgErr != nil {
-			return dgErr
-		}
-		for _, g := range dayGroups16 {
-			label := fmt.Sprintf("16-WORD POLYSEED (%s → %s)",
-				g.startDate.Format("2006-01-02"),
-				g.endDate.Format("2006-01-02"),
-			)
-			fmt.Print("\n\n")
-			printPEMPhrase(label, g.mnemonic)
-		}
-	} else {
-		var slots16 []yearMonth
-		years, yErr := getPolyseedYears()
-		if yErr != nil {
-			return fmt.Errorf("invalid --polyseed-year: %w", yErr)
-		}
-		month, mErr := getPolyseedMonth()
-		if mErr != nil {
-			return fmt.Errorf("invalid --polyseed-month: %w", mErr)
-		}
-		for _, y := range years {
-			slots16 = append(slots16, yearMonth{year: y, month: month})
-		}
-		for _, slot := range slots16 {
-			mnemonic16, mnErr := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(slot.year, slot.month)) //nolint:mnd
-			if mnErr != nil {
-				return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
-			}
-			fmt.Print("\n\n")
-			printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(slot.month), slot.year), mnemonic16)
-		}
+	if err := printPolyseedPhrases(ed25519Key, seedPassphrase); err != nil {
+		return err
 	}
 
 	// 3. 24-word seed phrase (standard, no prefix)

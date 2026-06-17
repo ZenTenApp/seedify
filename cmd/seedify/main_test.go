@@ -20,16 +20,16 @@ func TestBuildWordCounts(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		bitcoin      bool
-		ethereum     bool
-		zcash        bool
-		solana       bool
-		tron         bool
-		nostrFlag    bool
-		monero       bool
-		polyseedAll  bool
-		wantCounts   []int
+		name        string
+		bitcoin     bool
+		ethereum    bool
+		zcash       bool
+		solana      bool
+		tron        bool
+		nostrFlag   bool
+		monero      bool
+		polyseedAll bool
+		wantCounts  []int
 	}{
 		{
 			name:       "no flags — empty",
