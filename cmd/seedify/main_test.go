@@ -5,12 +5,16 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ZenTenApp/seedify"
+	nostrpkg "github.com/nbd-wtf/go-nostr"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -153,6 +157,142 @@ expect {
 	cmd.Stdin = strings.NewReader(script)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func TestZentenProfilePublishEntriesDefaultIncludesAllLabels(t *testing.T) {
+	t.Parallel()
+
+	record := dnsRecord{
+		SSHEd25519:    "ssh-pub",
+		Bitcoin:       "bc1example",
+		SilentPayment: "sp1example",
+		Litecoin:      "ltc1example",
+		Ethereum:      "0xeth",
+		HyperEVM:      "0xhype",
+	}
+
+	got := zentenProfilePublishEntries(record, "")
+	want := []nip78Entry{
+		{TagName: "ssh-ed25519", Value: "ssh-pub"},
+		{TagName: "bitcoin", Value: "bc1example"},
+		{TagName: "silentpayment", Value: "sp1example"},
+		{TagName: "litecoin", Value: "ltc1example"},
+		{TagName: "ethereum", Value: "0xeth"},
+		{TagName: "hyperevm", Value: "0xhype"},
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("zentenProfilePublishEntries returned %d entries, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("zentenProfilePublishEntries[%d] = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestZentenProfilePublishEntriesFiltersBlockchains(t *testing.T) {
+	t.Parallel()
+
+	record := dnsRecord{
+		SSHEd25519:    "ssh-pub",
+		Bitcoin:       "bc1example",
+		SilentPayment: "sp1example",
+		PayNym:        "PM8Texample",
+		Litecoin:      "ltc1example",
+		Monero:        "4example",
+		Ethereum:      "0xeth",
+		Solana:        "solexample",
+	}
+
+	got := zentenProfilePublishEntries(record, "silentpayment, ethereum,solana")
+	want := []nip78Entry{
+		{TagName: "silentpayment", Value: "sp1example"},
+		{TagName: "ethereum", Value: "0xeth"},
+		{TagName: "solana", Value: "solexample"},
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("zentenProfilePublishEntries returned %d entries, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("zentenProfilePublishEntries[%d] = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestNostrRateLimitErrorDetection(t *testing.T) {
+	t.Parallel()
+
+	if !isNostrRateLimitError(errors.New("msg: rate-limited: you are noting too much")) {
+		t.Fatal("expected damus rate-limit message to be detected")
+	}
+	if !isNostrRateLimitError(errors.New("rate limited by relay")) {
+		t.Fatal("expected rate limited message to be detected")
+	}
+	if isNostrRateLimitError(errors.New("invalid: blocked")) {
+		t.Fatal("did not expect non-rate-limit message to be detected")
+	}
+}
+
+func TestNostrPublishBackoff(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{attempt: 1, want: 5 * time.Second},
+		{attempt: 2, want: 15 * time.Second},
+		{attempt: 3, want: 30 * time.Second},
+		{attempt: 4, want: 30 * time.Second},
+	}
+
+	for _, tt := range tests {
+		if got := nostrPublishBackoff(tt.attempt); got != tt.want {
+			t.Fatalf("nostrPublishBackoff(%d) = %s, want %s", tt.attempt, got, tt.want)
+		}
+	}
+}
+
+func TestBuildZentenProfileEvents(t *testing.T) {
+	t.Parallel()
+
+	privKey := nostrpkg.GeneratePrivateKey()
+	pubKey, err := nostrpkg.GetPublicKey(privKey)
+	if err != nil {
+		t.Fatalf("get public key: %v", err)
+	}
+
+	nostrKeys := &seedify.NostrKeys{PubKeyHex: pubKey, PrivKeyHex: privKey}
+	record := &dnsRecord{Bitcoin: "bc1example", Ethereum: "0xexample"}
+	events, err := buildZentenProfileEvents(record, nostrKeys, "", "ethereum")
+	if err != nil {
+		t.Fatalf("buildZentenProfileEvents: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("buildZentenProfileEvents returned %d events, want 2", len(events))
+	}
+
+	identifier := events[0]
+	if identifier.Kind != kindNIP78 || identifier.Content != "" {
+		t.Fatalf("identifier event kind/content = %d/%q, want %d/empty", identifier.Kind, identifier.Content, kindNIP78)
+	}
+	if len(identifier.Tags) != 1 || len(identifier.Tags[0]) != 2 || identifier.Tags[0][0] != "d" || identifier.Tags[0][1] != defaultZentenProfileAppID {
+		t.Fatalf("identifier tags = %#v", identifier.Tags)
+	}
+
+	ethereum := events[1]
+	if ethereum.Kind != kindNIP78 || ethereum.Content != "0xexample" {
+		t.Fatalf("ethereum event kind/content = %d/%q, want %d/0xexample", ethereum.Kind, ethereum.Content, kindNIP78)
+	}
+	if len(ethereum.Tags) != 2 || len(ethereum.Tags[0]) != 2 || len(ethereum.Tags[1]) != 2 {
+		t.Fatalf("ethereum tags = %#v", ethereum.Tags)
+	}
+	if ethereum.Tags[0][0] != "d" || ethereum.Tags[0][1] != "ethereum" || ethereum.Tags[1][0] != "i" || ethereum.Tags[1][1] != zentenProfileITag {
+		t.Fatalf("ethereum tags = %#v", ethereum.Tags)
+	}
 }
 
 // TestCLIOutput_ChainFlagsOmitPreamble verifies that targeted chain-flag invocations
