@@ -44,6 +44,11 @@ func newCLIOut() *cliOut {
 	return o
 }
 
+const (
+	sectionGapLines  = 2
+	dividerRuleWidth = 40
+)
+
 var out = newCLIOut()
 
 func completeColor(truecolor, ansi256, ansi string) string {
@@ -84,6 +89,11 @@ func (o *cliOut) Blanks(n int) {
 	for range n {
 		fmt.Println()
 	}
+}
+
+// SectionGap prints the standard vertical spacing between major CLI sections.
+func (o *cliOut) SectionGap() {
+	o.Blanks(sectionGapLines)
 }
 
 // Sensitive prints secret material such as mnemonics and private keys.
@@ -245,6 +255,6 @@ func (o *cliOut) Divider() {
 	if !o.color {
 		return
 	}
-	rule := strings.Repeat("─", 40)
+	rule := strings.Repeat("─", dividerRuleWidth)
 	fmt.Println(o.borderStyle.Render(rule))
 }

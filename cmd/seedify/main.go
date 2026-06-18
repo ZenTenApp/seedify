@@ -1588,7 +1588,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 		return fmt.Errorf("could not derive Nostr keys from 24-word mnemonic: %w", err)
 	}
 
-	out.Blanks(2)
+	out.SectionGap()
 	if err := printSSHKeyPair(ed25519Key, bts, nostrKeys.Npub); err != nil {
 		return err
 	}
@@ -1599,7 +1599,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 		return fmt.Errorf("could not generate 12-word mnemonic: %w", err)
 	}
 	// 2 empty lines before the first output
-	out.Blanks(2)
+	out.SectionGap()
 	printPEMPhrase("12-WORD SEED PHRASE", mnemonic12)
 
 	// 2. 16-word seed phrases (Polyseed).
@@ -1612,11 +1612,11 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 
 	// 3. 24-word seed phrase (standard, no prefix)
 	// 2 empty lines between outputs
-	out.Blanks(2)
+	out.SectionGap()
 	printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
 
 	// 4. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
-	out.Blanks(2)
+	out.SectionGap()
 	out.NostrKeyBlock(nostrKeys.Npub, nostrKeys.PubKeyHex, nostrKeys.Nsec, nostrKeys.PrivKeyHex)
 
 	// 5. Monero 25-word legacy seed (Electrum-style, "monero" prefix)
@@ -1624,7 +1624,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	if err != nil {
 		return fmt.Errorf("could not generate Monero legacy seed: %w", err)
 	}
-	out.Blanks(2)
+	out.SectionGap()
 	printPEMPhrase("25-WORD MONERO LEGACY SEED", moneroLegacySeed)
 
 	// 6. Beldex 25-word seed ("beldex" prefix ensures divergence from Monero)
@@ -1632,7 +1632,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	if err != nil {
 		return fmt.Errorf("could not generate Beldex seed: %w", err)
 	}
-	out.Blanks(2)
+	out.SectionGap()
 	printPEMPhrase("25-WORD BELDEX (BDX) SEED", bdxSeed)
 
 	// 7. Brave 25-word seed phrase (24 brave-prefixed words + 25th word)
@@ -1640,11 +1640,11 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	if err != nil {
 		return fmt.Errorf("could not generate brave 25-word mnemonic: %w", err)
 	}
-	out.Blanks(2)
+	out.SectionGap()
 	printPEMPhrase("25-WORD BRAVE-SYNC", braveMnemonic)
 
 	// 2 empty lines after the last output
-	out.Blanks(2)
+	out.SectionGap()
 
 	return nil
 }
@@ -2487,7 +2487,7 @@ func displayKeyPreamble(ed25519Key *ed25519.PrivateKey, bts []byte, seedPassphra
 		return fmt.Errorf("could not derive Nostr keys for key comment: %w", nkErr)
 	}
 
-	out.Blanks(2)
+	out.SectionGap()
 	if err := printSSHKeyPair(ed25519Key, bts, nostrKeys.Npub); err != nil {
 		return err
 	}
