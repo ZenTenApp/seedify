@@ -31,7 +31,7 @@ func newCLIOut() *cliOut {
 
 	cyan := lipgloss.Color(completeColor("#7DC4E4", "117", "6"))
 	dim := lipgloss.Color(completeColor("#6C7086", "245", "8"))
-	public := lipgloss.Color(completeColor("#8ECFA8", "108", "2"))   // soft sage green
+	public := lipgloss.Color(completeColor("#8ECFA8", "108", "2"))  // soft sage green
 	private := lipgloss.Color(completeColor("#E8A0A8", "210", "1")) // soft rose red
 	muted := lipgloss.Color(completeColor("#45475A", "240", "8"))
 

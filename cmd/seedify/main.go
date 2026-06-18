@@ -1913,16 +1913,16 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
 					}
 
-				out.Sectionf("16 word seed phrase (%d-%02d)", slot.year, int(slot.month))
-				out.Blank()
-				out.Sensitive(mnemonic)
+					out.Sectionf("16 word seed phrase (%d-%02d)", slot.year, int(slot.month))
+					out.Blank()
+					out.Sensitive(mnemonic)
 
-				legacySeed, legacyErr := seedify.ToMoneroLegacySeedFromPolyseed(mnemonic)
-				if legacyErr != nil {
-					return fmt.Errorf("failed to derive Monero legacy seed from polyseed (%d-%02d): %w", slot.year, int(slot.month), legacyErr)
-				}
-				out.Sensitive(legacySeed)
-				out.Blank()
+					legacySeed, legacyErr := seedify.ToMoneroLegacySeedFromPolyseed(mnemonic)
+					if legacyErr != nil {
+						return fmt.Errorf("failed to derive Monero legacy seed from polyseed (%d-%02d): %w", slot.year, int(slot.month), legacyErr)
+					}
+					out.Sensitive(legacySeed)
+					out.Blank()
 
 					if deriveXmr {
 						xmrKeys, xmrErr := seedify.DeriveMoneroKeys(mnemonic, 9) //nolint:mnd
@@ -1930,20 +1930,20 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 							return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", slot.year, int(slot.month), xmrErr)
 						}
 
-					out.Sectionf("monero addresses from 16 word polyseed (%d-%02d)", slot.year, int(slot.month))
-					out.Blank()
-					out.Field(xmrKeys.PrimaryAddress, "primary address")
-					for j, subaddr := range xmrKeys.Subaddresses {
-						out.SubField(subaddr, fmt.Sprintf("subaddress 0,%d", j+1))
+						out.Sectionf("monero addresses from 16 word polyseed (%d-%02d)", slot.year, int(slot.month))
+						out.Blank()
+						out.Field(xmrKeys.PrimaryAddress, "primary address")
+						for j, subaddr := range xmrKeys.Subaddresses {
+							out.SubField(subaddr, fmt.Sprintf("subaddress 0,%d", j+1))
+						}
+						out.Blank()
 					}
-					out.Blank()
-				}
 
-				if deriveXmr || deriveXmrLegacy {
-					out.Section("25 word monero legacy seed")
-					out.Blank()
-					out.Sensitive(legacySeed)
-					out.Blank()
+					if deriveXmr || deriveXmrLegacy {
+						out.Section("25 word monero legacy seed")
+						out.Blank()
+						out.Sensitive(legacySeed)
+						out.Blank()
 
 						if err := displayMoneroLegacyAddresses(legacySeed); err != nil {
 							return err
