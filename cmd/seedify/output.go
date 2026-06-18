@@ -29,16 +29,16 @@ func newCLIOut() *cliOut {
 		return o
 	}
 
-	cyan := lipgloss.Color(completeColor("#56B6C2", "73", "6"))
+	cyan := lipgloss.Color(completeColor("#7DC4E4", "117", "6"))
 	dim := lipgloss.Color(completeColor("#6C7086", "245", "8"))
-	bright := lipgloss.Color(completeColor("#CDD6F4", "255", "15"))
-	yellow := lipgloss.Color(completeColor("#F9E2AF", "221", "11"))
+	public := lipgloss.Color(completeColor("#8ECFA8", "108", "2"))   // soft sage green
+	private := lipgloss.Color(completeColor("#E8A0A8", "210", "1")) // soft rose red
 	muted := lipgloss.Color(completeColor("#45475A", "240", "8"))
 
 	o.sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(cyan)
 	o.labelStyle = lipgloss.NewStyle().Foreground(dim)
-	o.valueStyle = lipgloss.NewStyle().Foreground(bright)
-	o.sensitiveStyle = lipgloss.NewStyle().Foreground(yellow)
+	o.valueStyle = lipgloss.NewStyle().Foreground(public)
+	o.sensitiveStyle = lipgloss.NewStyle().Foreground(private)
 	o.borderStyle = lipgloss.NewStyle().Foreground(muted)
 	o.treeStyle = lipgloss.NewStyle().Foreground(dim)
 	return o
@@ -51,6 +51,10 @@ const (
 
 var out = newCLIOut()
 
+// completeColor picks the best color string for the active terminal profile.
+// Lipgloss resolves colors differently per capability: 24-bit hex on true-color
+// terminals, palette indices on 256-color terminals, and basic ANSI codes
+// (e.g. "2" for green) as the fallback.
 func completeColor(truecolor, ansi256, ansi string) string {
 	//nolint:exhaustive
 	switch lipgloss.ColorProfile() {
