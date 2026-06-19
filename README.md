@@ -340,7 +340,7 @@ chain derivations.
 and **`--words`**: emit *only* the requested output — no SSH key material, no Tor/I2P
 address. Use these when you only need a specific seed phrase or address.
 
-**Exclusive flags** (`--brave`, `--zenprofile`, `--to-rsa`, `--to-dkim`, `--to-onion`,
+**Exclusive flags** (`--brave`, `--zentenprofile`, `--to-rsa`, `--to-dkim`, `--to-onion`,
 `--to-i2p`, `--to-pgp`): each produces a single focused output and bypasses seed phrase
 generation entirely.
 
@@ -359,8 +359,9 @@ generation entirely.
 | `--sol` | Derive Solana address |
 | `--tron` | Derive Tron address |
 | `--xmr` | Derive Monero address from Polyseed |
-| `--zenprofile` | Output public keys and addresses as DNS JSON |
-| `--publish` | Publish NIP-78 event to relays (with `--zenprofile`) |
+| `--zentenprofile` | Output public keys and addresses as DNS JSON |
+| `--publish` | Publish ZentenProfile NIP-78 Kind 30078 events to relays (with `--zentenprofile`): one identifier event (`d=app.zentenprofile.identifier`) and one event per selected label |
+| `--blockchains` | Comma-separated labels to publish with `--zentenprofile --publish`; default is all labels |
 | `--polyseed-year` | Override Polyseed birthday year (default: current year) |
 | `-l, --language` | Mnemonic language (default: en) |
 
