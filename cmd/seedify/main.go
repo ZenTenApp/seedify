@@ -51,6 +51,7 @@ const (
 
 	nostrPublishDelay                   = 3 * time.Second
 	nostrPublishMaxRetries              = 3
+	nostrPublishSecondRetryAttempt      = 2
 	nostrPublishFirstRateLimitBackoff   = 5 * time.Second
 	nostrPublishSecondRateLimitBackoff  = 15 * time.Second
 	nostrPublishMaxRateLimitBackoff     = 30 * time.Second
@@ -3015,8 +3016,8 @@ func buildZentenProfileEvents(record *dnsRecord, nostrKeys *seedify.NostrKeys, a
 }
 
 func nip78EventLabel(ev *nostrpkg.Event) string {
-	if dTag := ev.Tags.GetFirst([]string{"d", ""}); dTag != nil && len(*dTag) > 1 {
-		return (*dTag)[1]
+	if dTag := ev.Tags.Find("d"); len(dTag) > 1 {
+		return dTag[1]
 	}
 	return "identifier"
 }
@@ -3033,7 +3034,7 @@ func nostrPublishBackoff(attempt int) time.Duration {
 	switch attempt {
 	case 1:
 		return nostrPublishFirstRateLimitBackoff
-	case 2:
+	case nostrPublishSecondRetryAttempt:
 		return nostrPublishSecondRateLimitBackoff
 	default:
 		return nostrPublishMaxRateLimitBackoff
@@ -3043,7 +3044,7 @@ func nostrPublishBackoff(attempt int) time.Duration {
 func sleepWithContext(ctx context.Context, delay time.Duration) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled while sleeping: %w", ctx.Err())
 	case <-time.After(delay):
 		return nil
 	}
@@ -3066,11 +3067,29 @@ func publishNIP78EventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev
 			if isNostrRateLimitError(err) && attempt < nostrPublishMaxRetries {
 				continue
 			}
-			return err
+			return fmt.Errorf("failed to publish NIP-78 Kind 30078 event %s to %s: %w", label, relayURL, err)
 		}
 		return nil
 	}
-	return lastErr
+	return fmt.Errorf("failed to publish NIP-78 Kind 30078 event %s to %s: %w", label, relayURL, lastErr)
+}
+
+func handleNIP78PublishFailure(ctx context.Context, relayURL string, label string, err error, consecutiveRateLimitFailures int) (int, error) {
+	fmt.Fprintf(os.Stderr, "seedify: failed to publish NIP-78 Kind 30078 event %s to %s: %v\n", label, relayURL, err)
+	if !isNostrRateLimitError(err) {
+		return consecutiveRateLimitFailures, nil
+	}
+
+	consecutiveRateLimitFailures++
+	if consecutiveRateLimitFailures < nostrMaxConsecutiveRateLimitFailure {
+		return consecutiveRateLimitFailures, nil
+	}
+
+	fmt.Fprintf(os.Stderr, "seedify: relay %s is still rate-limiting after %d consecutive failures; cooling down for %s\n", relayURL, consecutiveRateLimitFailures, nostrPublishRateLimitCooldown)
+	if err := sleepWithContext(ctx, nostrPublishRateLimitCooldown); err != nil {
+		return consecutiveRateLimitFailures, err
+	}
+	return 0, nil
 }
 
 // publishZentenProfileToRelays publishes current ZentenProfile NIP-78 Kind 30078 events to the given relays.
@@ -3106,16 +3125,9 @@ func publishZentenProfileToRelays(record *dnsRecord, nostrKeys *seedify.NostrKey
 
 			fmt.Fprintf(os.Stderr, "seedify: publishing NIP-78 Kind 30078 event %s (%d/%d) to %s\n", label, i+1, len(events), url)
 			if err := publishNIP78EventWithBackoff(ctx, relay, ev, url); err != nil {
-				fmt.Fprintf(os.Stderr, "seedify: failed to publish NIP-78 Kind 30078 event %s to %s: %v\n", label, url, err)
-				if isNostrRateLimitError(err) {
-					consecutiveRateLimitFailures++
-					if consecutiveRateLimitFailures >= nostrMaxConsecutiveRateLimitFailure {
-						fmt.Fprintf(os.Stderr, "seedify: relay %s is still rate-limiting after %d consecutive failures; cooling down for %s\n", url, consecutiveRateLimitFailures, nostrPublishRateLimitCooldown)
-						if err := sleepWithContext(ctx, nostrPublishRateLimitCooldown); err != nil {
-							return err
-						}
-						consecutiveRateLimitFailures = 0
-					}
+				consecutiveRateLimitFailures, err = handleNIP78PublishFailure(ctx, url, label, err, consecutiveRateLimitFailures)
+				if err != nil {
+					return err
 				}
 				continue
 			}
