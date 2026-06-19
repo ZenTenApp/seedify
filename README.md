@@ -324,6 +324,7 @@ seedify ~/.ssh/id_ed25519 --btc --eth --sol
 seedify ~/.ssh/id_ed25519 --full
 seedify ~/.ssh/id_ed25519 --brave
 seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025
+seedify ~/.ssh/id_ed25519 --to-dnssec --dnssec-domain example.com --dnssec-ksk --output ./dnssec-keys
 cat ~/.ssh/id_ed25519 | seedify --words 18
 ```
 
@@ -340,9 +341,9 @@ chain derivations.
 and **`--words`**: emit *only* the requested output — no SSH key material, no Tor/I2P
 address. Use these when you only need a specific seed phrase or address.
 
-**Exclusive flags** (`--brave`, `--zentenprofile`, `--to-rsa`, `--to-dkim`, `--to-onion`,
-`--to-i2p`, `--to-pgp`): each produces a single focused output and bypasses seed phrase
-generation entirely.
+**Exclusive flags** (`--brave`, `--zentenprofile`, `--to-rsa`, `--to-dkim`, `--to-dnssec`,
+`--to-onion`, `--to-i2p`, `--to-pgp`): each produces a single focused output and bypasses
+seed phrase generation entirely.
 
 ### Flags
 
@@ -360,6 +361,7 @@ generation entirely.
 | `--tron` | Derive Tron address |
 | `--xmr` | Derive Monero address from Polyseed |
 | `--zentenprofile` | Output public keys and addresses as DNS JSON |
+| `--to-dnssec` | Derive a DNSSEC RSASHA256 keypair; use with `--dnssec-domain`, `--dnssec-ksk`/`--dnssec-zsk`, and optional `--output <dir>` |
 | `--publish` | Publish ZentenProfile NIP-78 Kind 30078 events to relays (with `--zentenprofile`): one identifier event (`d=app.zentenprofile.identifier`) and one event per selected label |
 | `--blockchains` | Comma-separated labels to publish with `--zentenprofile --publish`; default is all labels |
 | `--polyseed-year` | Override Polyseed birthday year (default: current year) |
