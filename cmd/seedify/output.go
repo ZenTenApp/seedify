@@ -29,20 +29,19 @@ func newCLIOut() *cliOut {
 		return o
 	}
 
-	cyan := lipgloss.Color(completeColor("#7DC4E4", "117", "6"))
-	dim := lipgloss.Color(completeColor("#6C7086", "245", "8"))
-	public := lipgloss.Color(completeColor("#8ECFA8", "108", "2"))  // soft sage green
-	private := lipgloss.Color(completeColor("#E8A0A8", "210", "1")) // soft rose red
-	muted := lipgloss.Color(completeColor("#45475A", "240", "8"))
+	white := lipgloss.Color(completeColor("#FFFFFF", "15", "15"))
+	public := lipgloss.Color(completeColor("#7CFC00", "118", "10"))
+	private := lipgloss.Color(completeColor("#FF0000", "196", "1"))
 
-	o.sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(cyan)
-	o.labelStyle = lipgloss.NewStyle().Foreground(dim)
+	o.sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(white)
+	o.labelStyle = lipgloss.NewStyle().Foreground(white)
 	o.valueStyle = lipgloss.NewStyle().Foreground(public)
 	o.sensitiveStyle = lipgloss.NewStyle().Foreground(private)
-	o.borderStyle = lipgloss.NewStyle().Foreground(muted)
-	o.treeStyle = lipgloss.NewStyle().Foreground(dim)
+	o.borderStyle = lipgloss.NewStyle().Foreground(white)
+	o.treeStyle = lipgloss.NewStyle().Foreground(white)
 	return o
 }
+
 
 const (
 	sectionGapLines  = 2
