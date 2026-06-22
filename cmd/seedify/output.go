@@ -42,7 +42,6 @@ func newCLIOut() *cliOut {
 	return o
 }
 
-
 const (
 	sectionGapLines  = 2
 	dividerRuleWidth = 40
