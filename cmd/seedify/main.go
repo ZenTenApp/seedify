@@ -99,6 +99,7 @@ var (
 	// derive-key flags.
 	deriveKeyToRSA           bool
 	deriveKeyToDKIM          bool
+	deriveKeyToDNSSEC        bool
 	deriveKeyToOnion         bool
 	deriveKeyToI2P           bool
 	deriveKeyToWireGuard     bool
@@ -110,6 +111,10 @@ var (
 	deriveKeyBits            int
 	deriveKeyDKIMSelector    string
 	deriveKeyDKIMDomain      string
+	deriveKeyDNSSECDomain    string
+	deriveKeyDNSSECAlgorithm int
+	deriveKeyDNSSECKSK       bool
+	deriveKeyDNSSECZSK       bool
 	deriveKeyReusePassphrase bool
 
 	rootCmd = &cobra.Command{
@@ -150,7 +155,8 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --to-rsa --openssl-compatible --output ~/.ssh/id_rsa_derived.pem
   seedify ~/.ssh/id_ed25519 --to-dkim --output /etc/opendkim/keys/mail.private
   seedify ~/.ssh/id_ed25519 --to-dkim --dkim-selector mail --dkim-domain example.com --output /etc/opendkim/keys/mail.private
-  seedify deployment-ssh-key --to-dkim --dkim-domain mail1.npub.cx --dkim-selector mail2026`,
+  seedify deployment-ssh-key --to-dkim --dkim-domain mail1.npub.cx --dkim-selector mail2026
+  seedify ~/.ssh/id_ed25519 --to-dnssec --dnssec-domain example.com --dnssec-ksk --output ./dnssec-keys`,
 		Version:      fmt.Sprintf("%s (commit %s, built %s)", version, commit, date),
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
@@ -182,24 +188,24 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				return errors.New("--reuse-passphrase requires --to-rsa or --to-pgp")
 			}
 
-			// --to-pgp is mutually exclusive with --to-rsa and --to-dkim.
-			if deriveKeyToPGP && (deriveKeyToRSA || deriveKeyToDKIM) {
-				return errors.New("--to-pgp cannot be combined with --to-rsa or --to-dkim")
+			// Key derivation modes are mutually exclusive.
+			deriveModeCount := 0
+			for _, enabled := range []bool{deriveKeyToRSA, deriveKeyToDKIM, deriveKeyToDNSSEC, deriveKeyToPGP, deriveKeyToOnion, deriveKeyToI2P, deriveKeyToWireGuard} {
+				if enabled {
+					deriveModeCount++
+				}
+			}
+			if deriveModeCount > 1 {
+				return errors.New("key derivation flags are mutually exclusive")
 			}
 
-			// --to-onion is mutually exclusive with all other derivation modes.
-			if deriveKeyToOnion && (deriveKeyToRSA || deriveKeyToDKIM || deriveKeyToPGP) {
-				return errors.New("--to-onion cannot be combined with --to-rsa, --to-dkim, or --to-pgp")
-			}
-
-			// --to-i2p is mutually exclusive with all other derivation modes.
-			if deriveKeyToI2P && (deriveKeyToRSA || deriveKeyToDKIM || deriveKeyToPGP || deriveKeyToOnion) {
-				return errors.New("--to-i2p cannot be combined with --to-rsa, --to-dkim, --to-pgp, or --to-onion")
-			}
-
-			// --to-wireguard is mutually exclusive with all other derivation modes.
-			if deriveKeyToWireGuard && (deriveKeyToRSA || deriveKeyToDKIM || deriveKeyToPGP || deriveKeyToOnion || deriveKeyToI2P) {
-				return errors.New("--to-wireguard cannot be combined with --to-rsa, --to-dkim, --to-pgp, --to-onion, or --to-i2p")
+			if deriveKeyToDNSSEC {
+				if deriveKeyDNSSECDomain == "" {
+					return errors.New("--dnssec-domain is required with --to-dnssec")
+				}
+				if deriveKeyDNSSECKSK && deriveKeyDNSSECZSK {
+					return errors.New("--dnssec-ksk and --dnssec-zsk are mutually exclusive")
+				}
 			}
 
 			// --pgp-name and --pgp-email are both required when --to-pgp is set.
@@ -233,6 +239,11 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			// Handle --to-dkim: derive a DKIM RSA keypair and write private key to disk (or stdout).
 			if deriveKeyToDKIM {
 				return runDeriveDKIMKey(keyPath)
+			}
+
+			// Handle --to-dnssec: derive a DNSSEC RSA keypair and write BIND-compatible files.
+			if deriveKeyToDNSSEC {
+				return runDeriveDNSSECKey(keyPath)
 			}
 
 			// Handle --to-pgp: derive an OpenPGP RSA keypair and write an ASCII-armored .asc file.
@@ -536,6 +547,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&polyseedAll, "all-polyseeds", false, "Generate every possible polyseed (Nov 2021 – current month), one per month with correct birthday")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToRSA, "to-rsa", false, "Derive an RSA key from the input Ed25519 key and write it to --output")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToDKIM, "to-dkim", false, "Derive a DKIM RSA keypair from the input Ed25519 key; when --dkim-domain is set, writes config/dkim/<domain>/<selector>.private and .public automatically")
+	rootCmd.PersistentFlags().BoolVar(&deriveKeyToDNSSEC, "to-dnssec", false, "Derive a DNSSEC RSASHA256 keypair from the input Ed25519 key; use --dnssec-domain and --output <dir>")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToOnion, "to-onion", false, "Derive a Tor v3 hidden service identity from the input Ed25519 key; use --output <dir> to write the Tor key files")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToI2P, "to-i2p", false, "Derive an I2P Destination (Ed25519 signing + X25519 encryption) from the input Ed25519 key; use --output <dir> to write the keys.dat file")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToWireGuard, "to-wireguard", false, "Derive a WireGuard static keypair from the input Ed25519 key; prints private and public keys in base64 (wg format)")
@@ -547,6 +559,10 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&deriveKeyBits, "bits", 4096, "RSA key size in bits (2048, 3072, or 4096); used with --to-rsa, --to-dkim, or --to-pgp") //nolint:mnd
 	rootCmd.PersistentFlags().StringVar(&deriveKeyDKIMSelector, "dkim-selector", "mail", "DKIM selector name for the DNS TXT record (used with --to-dkim)")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyDKIMDomain, "dkim-domain", "", "Domain for the DKIM DNS TXT record label, e.g. example.com (used with --to-dkim)")
+	rootCmd.PersistentFlags().StringVar(&deriveKeyDNSSECDomain, "dnssec-domain", "", "Zone name for DNSSEC output, e.g. example.com (used with --to-dnssec)")
+	rootCmd.PersistentFlags().IntVar(&deriveKeyDNSSECAlgorithm, "dnssec-algorithm", seedify.DNSSECAlgorithmRSASHA256, "DNSSEC algorithm number (8 = RSASHA256; used with --to-dnssec)")
+	rootCmd.PersistentFlags().BoolVar(&deriveKeyDNSSECKSK, "dnssec-ksk", false, "Generate a DNSSEC KSK with flags 257 (default for --to-dnssec)")
+	rootCmd.PersistentFlags().BoolVar(&deriveKeyDNSSECZSK, "dnssec-zsk", false, "Generate a DNSSEC ZSK with flags 256")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyReusePassphrase, "reuse-passphrase", false, "Reuse the source key's passphrase to protect the derived key (used with --to-rsa or --to-pgp); requires the source key to be password-protected")
 	rootCmd.AddCommand(manCmd)
 	rootCmd.AddCommand(braveSync25thCmd)
@@ -912,6 +928,95 @@ func runDeriveDKIMKey(keyPath string) error {
 		fmt.Fprintln(os.Stderr, "      255-character chunks. Check your provider's documentation if")
 		fmt.Fprintln(os.Stderr, "      the record is rejected. For a 4096-bit key the value is ~736")
 		fmt.Fprintln(os.Stderr, "      characters; for 2048-bit it is ~392 characters.")
+	}
+
+	return nil
+}
+
+// runDeriveDNSSECKey handles --to-dnssec: derives a DNSSEC RSA keypair from
+// the source Ed25519 key and writes BIND-compatible .key/.private files plus a
+// .ds helper file when --output <dir> is set. Without --output it prints the
+// public DNSKEY and DS records only; private key material is not printed.
+func runDeriveDNSSECKey(keyPath string) error {
+	f, err := openFileOrStdin(keyPath)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	bts, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+
+	key, err := parsePrivateKey(bts, nil)
+	if err != nil && isPasswordError(err) {
+		pass, passErr := askKeyPassphrase(keyPath)
+		if passErr != nil {
+			return passErr
+		}
+		key, err = parsePrivateKey(bts, pass)
+		if err != nil {
+			return fmt.Errorf("could not parse key with passphrase: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("could not parse key: %w", err)
+	}
+
+	ed25519Key, ok := key.(*ed25519.PrivateKey)
+	if !ok {
+		return unsupportedKeyTypeError(key)
+	}
+
+	flags := 257
+	if deriveKeyDNSSECZSK {
+		flags = 256
+	}
+
+	fmt.Fprintf(os.Stderr, "Deriving %d-bit DNSSEC RSASHA256 keypair for %s (this may take a moment)...\n", deriveKeyBits, deriveKeyDNSSECDomain)
+
+	dnssecKeys, deriveErr := seedify.DeriveDNSSECKeypair(ed25519Key, deriveKeyDNSSECDomain, deriveKeyDNSSECAlgorithm, flags, deriveKeyBits)
+	if deriveErr != nil {
+		return fmt.Errorf("could not derive DNSSEC keypair: %w", deriveErr)
+	}
+
+	if deriveKeyOutput != "" {
+		if mkdirErr := os.MkdirAll(deriveKeyOutput, 0o700); mkdirErr != nil { //nolint:mnd
+			return fmt.Errorf("could not create DNSSEC output directory %s: %w", deriveKeyOutput, mkdirErr)
+		}
+
+		keyPathOut := filepath.Join(deriveKeyOutput, dnssecKeys.FileBase+".key")
+		privatePathOut := filepath.Join(deriveKeyOutput, dnssecKeys.FileBase+".private")
+		dsPathOut := filepath.Join(deriveKeyOutput, dnssecKeys.FileBase+".ds")
+
+		if writeErr := os.WriteFile(keyPathOut, dnssecKeys.KeyFile, 0o644); writeErr != nil { //nolint:gosec,mnd // DNSKEY is public
+			return fmt.Errorf("could not write DNSSEC public key to %s: %w", keyPathOut, writeErr)
+		}
+		if writeErr := os.WriteFile(privatePathOut, dnssecKeys.PrivateKeyFile, 0o600); writeErr != nil { //nolint:mnd
+			return fmt.Errorf("could not write DNSSEC private key to %s: %w", privatePathOut, writeErr)
+		}
+		if writeErr := os.WriteFile(dsPathOut, []byte(dnssecKeys.DSRecord+"\n"), 0o644); writeErr != nil { //nolint:gosec,mnd // DS is public
+			return fmt.Errorf("could not write DNSSEC DS record to %s: %w", dsPathOut, writeErr)
+		}
+
+		fmt.Fprintf(os.Stderr, "DNSSEC public key written to:  %s\n", keyPathOut)
+		fmt.Fprintf(os.Stderr, "DNSSEC private key written to: %s\n", privatePathOut)
+		fmt.Fprintf(os.Stderr, "DNSSEC DS record written to:   %s\n", dsPathOut)
+		fmt.Fprintln(os.Stderr)
+	}
+
+	fmt.Fprintln(os.Stderr, "DNSSEC records:")
+	fmt.Fprintf(os.Stderr, "  DNSKEY: %s\n", dnssecKeys.DNSKEYRecord)
+	fmt.Fprintf(os.Stderr, "  DS:     %s\n", dnssecKeys.DSRecord)
+	fmt.Fprintf(os.Stderr, "  Key ID: %05d\n", dnssecKeys.KeyTag)
+
+	if deriveKeyOutput == "" {
+		if _, printErr := fmt.Fprintln(os.Stdout, dnssecKeys.DNSKEYRecord); printErr != nil {
+			return fmt.Errorf("could not print DNSKEY record: %w", printErr)
+		}
+		if _, printErr := fmt.Fprintln(os.Stdout, dnssecKeys.DSRecord); printErr != nil {
+			return fmt.Errorf("could not print DS record: %w", printErr)
+		}
 	}
 
 	return nil
