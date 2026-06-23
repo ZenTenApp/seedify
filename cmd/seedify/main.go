@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
@@ -15,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -44,9 +46,11 @@ import (
 const (
 	maxWidth = 72
 
-	kindNIP78                 = 30078
-	defaultZentenProfileAppID = "app.zentenprofile.identifier"
-	zentenProfileITag         = "blockchains"
+	kindNIP78         = 30078
+	zentenProfileITag = "blockchains"
+
+	zentenProfileMoneroDailySubaddressMax = 9
+	zentenProfileBitcoinDailyAddressMax   = 99
 
 	nostrPublishDelay                   = 3 * time.Second
 	nostrPublishMaxRetries              = 3
@@ -74,27 +78,26 @@ var (
 			Background(lipgloss.AdaptiveColor{Light: completeColor("#FFEBEB", "255", "7"), Dark: completeColor("#2B1A1A", "235", "8")}).
 			Padding(1, 2) //nolint:mnd
 
-	language           string
-	wordCountStr       string
-	seedPassphrase     string
-	brave              bool
-	full               bool
-	nostr              bool
-	bitcoin            bool
-	ethereum           bool
-	zcash              bool
-	solana             bool
-	tron               bool
-	monero             bool
-	moneroLegacy       bool
-	beldex             bool
-	zentenprofile      bool
-	publishRelays      string
-	blockchains        string
-	zentenprofileAppID string
-	polyseedYear       string
-	polyseedMonth      string
-	polyseedAll        bool
+	language       string
+	wordCountStr   string
+	seedPassphrase string
+	brave          bool
+	full           bool
+	nostr          bool
+	bitcoin        bool
+	ethereum       bool
+	zcash          bool
+	solana         bool
+	tron           bool
+	monero         bool
+	moneroLegacy   bool
+	beldex         bool
+	zentenprofile  bool
+	publishRelays  string
+	blockchains    string
+	polyseedYear   string
+	polyseedMonth  string
+	polyseedAll    bool
 
 	// derive-key flags.
 	deriveKeyToRSA           bool
@@ -541,7 +544,6 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&zentenprofile, "zentenprofile", false, "Output public keys and addresses as DNS JSON to stdout")
 	rootCmd.PersistentFlags().StringVar(&publishRelays, "publish", "", "When used with --zentenprofile: publish NIP-78 Kind 30078 events to these relays (comma-separated, e.g. relay.primal.net,relay.damus.io)")
 	rootCmd.PersistentFlags().StringVar(&blockchains, "blockchains", "", "When used with --zentenprofile --publish: comma-separated NIP-78 labels to publish. Default: all labels")
-	rootCmd.PersistentFlags().StringVar(&zentenprofileAppID, "zentenprofile-app-id", defaultZentenProfileAppID, "When used with --zentenprofile --publish: NIP-78 d tag value for the identifier event")
 	rootCmd.PersistentFlags().StringVar(&polyseedYear, "polyseed-year", "", "Override polyseed year (YYYY). Default: current year")
 	rootCmd.PersistentFlags().StringVar(&polyseedMonth, "polyseed-month", "", "Override polyseed month (1-12). Default: 1 (January)")
 	rootCmd.PersistentFlags().BoolVar(&polyseedAll, "all-polyseeds", false, "Generate every possible polyseed (Nov 2021 – current month), one per month with correct birthday")
@@ -610,7 +612,36 @@ func getPolyseedMonth() (time.Month, error) {
 // birthdayFromYearMonth returns the Unix timestamp for the 1st day at 00:00 UTC
 // of the given year and month, suitable for use as a polyseed birthday.
 func birthdayFromYearMonth(year int, month time.Month) uint64 {
-	return uint64(time.Date(year, month, 1, 0, 0, 0, 0, time.UTC).Unix()) //nolint:gosec
+	return unixBirthday(time.Date(year, month, 1, 0, 0, 0, 0, time.UTC))
+}
+
+func birthdayFromDate(date time.Time) uint64 {
+	year, month, day := date.UTC().Date()
+	return unixBirthday(time.Date(year, month, day, 0, 0, 0, 0, time.UTC))
+}
+
+func unixBirthday(date time.Time) uint64 {
+	unix := date.Unix()
+	if unix < 0 {
+		return 0
+	}
+	return uint64(unix)
+}
+
+func zentenProfileRandomIndex(minIndex uint32, maxIndex uint32) (uint32, error) {
+	if maxIndex < minIndex {
+		return 0, fmt.Errorf("invalid random index range %d..%d", minIndex, maxIndex)
+	}
+	if maxIndex == minIndex {
+		return minIndex, nil
+	}
+
+	span := uint64(maxIndex - minIndex + 1)
+	n, err := rand.Int(rand.Reader, new(big.Int).SetUint64(span))
+	if err != nil {
+		return 0, fmt.Errorf("could not select random index: %w", err)
+	}
+	return minIndex + uint32(n.Uint64()), nil //nolint:gosec
 }
 
 type yearMonth struct {
@@ -2873,9 +2904,10 @@ func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seed
 		return nil, nil, fmt.Errorf("failed to derive Nostr keys: %w", err)
 	}
 
-	btcAddr, err := seedify.DeriveBitcoinAddressNativeSegwitAtIndex(mnemonic, "", 0)
+	zentenProfileDate := time.Now().UTC()
+	btcAddr, _, err := zentenProfileBitcoinAddress(mnemonic)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to derive Bitcoin native SegWit address: %w", err)
+		return nil, nil, err
 	}
 
 	sp1Addr, err := seedify.DeriveSilentPaymentAddress(mnemonic, "")
@@ -2898,21 +2930,13 @@ func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seed
 		return nil, nil, fmt.Errorf("failed to derive Dogecoin address: %w", err)
 	}
 
-	dnsMonth, monthErr := getPolyseedMonth()
-	if monthErr != nil {
-		return nil, nil, fmt.Errorf("invalid --polyseed-month: %w", monthErr)
-	}
-	dnsYear, yearErr := getPolyseedYears()
-	if yearErr != nil {
-		return nil, nil, fmt.Errorf("invalid --polyseed-year: %w", yearErr)
-	}
-	polyseedMnemonic, err := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromYearMonth(dnsYear[0], dnsMonth)) //nolint:mnd
+	polyseedMnemonic, err := seedify.ToMnemonicWithLength(ed25519Key, 16, seedPassphrase, false, birthdayFromDate(zentenProfileDate)) //nolint:mnd
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not generate 16-word polyseed: %w", err)
+		return nil, nil, fmt.Errorf("could not generate current-day 16-word polyseed: %w", err)
 	}
-	xmrAddr, err := seedify.DeriveMoneroAddress(polyseedMnemonic)
+	xmrAddr, _, err := zentenProfileMoneroSubaddress(polyseedMnemonic)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to derive Monero address: %w", err)
+		return nil, nil, err
 	}
 
 	cosmosAddr, err := seedify.DeriveCosmosAddress(mnemonic, "")
@@ -2996,6 +3020,30 @@ func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seed
 	return record, nostrKeys, nil
 }
 
+func zentenProfileBitcoinAddress(mnemonic string) (string, uint32, error) {
+	index, indexErr := zentenProfileRandomIndex(1, zentenProfileBitcoinDailyAddressMax)
+	if indexErr != nil {
+		return "", 0, indexErr
+	}
+	addr, err := seedify.DeriveBitcoinAddressNativeSegwitAtIndex(mnemonic, "", index)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to derive Bitcoin native SegWit address at index %d: %w", index, err)
+	}
+	return addr, index, nil
+}
+
+func zentenProfileMoneroSubaddress(polyseedMnemonic string) (string, uint32, error) {
+	index, indexErr := zentenProfileRandomIndex(1, zentenProfileMoneroDailySubaddressMax)
+	if indexErr != nil {
+		return "", 0, indexErr
+	}
+	addr, err := seedify.DeriveMoneroSubaddressAtIndex(polyseedMnemonic, index-1)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to derive Monero subaddress %d: %w", index, err)
+	}
+	return addr, index, nil
+}
+
 func buildZentenProfileEvent(nostrKeys *seedify.NostrKeys, tags [][]string, content string, createdAt nostrpkg.Timestamp) (*nostrpkg.Event, error) {
 	ev := &nostrpkg.Event{
 		PubKey:    nostrKeys.PubKeyHex,
@@ -3010,20 +3058,10 @@ func buildZentenProfileEvent(nostrKeys *seedify.NostrKeys, tags [][]string, cont
 	return ev, nil
 }
 
-func buildZentenProfileEvents(record *dnsRecord, nostrKeys *seedify.NostrKeys, appID string, labels string) ([]*nostrpkg.Event, error) {
-	if appID == "" {
-		appID = defaultZentenProfileAppID
-	}
-
+func buildZentenProfileEvents(record *dnsRecord, nostrKeys *seedify.NostrKeys, labels string) ([]*nostrpkg.Event, error) {
 	createdAt := nostrpkg.Now()
 	publishEntries := zentenProfilePublishEntries(*record, labels)
-	events := make([]*nostrpkg.Event, 0, len(publishEntries)+1)
-
-	identifierEvent, err := buildZentenProfileEvent(nostrKeys, [][]string{{"d", appID}}, "", createdAt)
-	if err != nil {
-		return nil, err
-	}
-	events = append(events, identifierEvent)
+	events := make([]*nostrpkg.Event, 0, len(publishEntries))
 
 	for _, entry := range publishEntries {
 		event, err := buildZentenProfileEvent(nostrKeys, [][]string{{"d", entry.TagName}, {"i", zentenProfileITag}}, entry.Value, createdAt)
@@ -3115,7 +3153,7 @@ func handleNIP78PublishFailure(ctx context.Context, relayURL string, label strin
 
 // publishZentenProfileToRelays publishes current ZentenProfile NIP-78 Kind 30078 events to the given relays.
 func publishZentenProfileToRelays(record *dnsRecord, nostrKeys *seedify.NostrKeys, relays []string, labels string) error {
-	events, err := buildZentenProfileEvents(record, nostrKeys, zentenprofileAppID, labels)
+	events, err := buildZentenProfileEvents(record, nostrKeys, labels)
 	if err != nil {
 		return err
 	}
