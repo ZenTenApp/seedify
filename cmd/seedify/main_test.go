@@ -267,23 +267,15 @@ func TestBuildZentenProfileEvents(t *testing.T) {
 
 	nostrKeys := &seedify.NostrKeys{PubKeyHex: pubKey, PrivKeyHex: privKey}
 	record := &dnsRecord{Bitcoin: "bc1example", Ethereum: "0xexample"}
-	events, err := buildZentenProfileEvents(record, nostrKeys, "", "ethereum")
+	events, err := buildZentenProfileEvents(record, nostrKeys, "ethereum")
 	if err != nil {
 		t.Fatalf("buildZentenProfileEvents: %v", err)
 	}
-	if len(events) != 2 {
-		t.Fatalf("buildZentenProfileEvents returned %d events, want 2", len(events))
+	if len(events) != 1 {
+		t.Fatalf("buildZentenProfileEvents returned %d events, want 1", len(events))
 	}
 
-	identifier := events[0]
-	if identifier.Kind != kindNIP78 || identifier.Content != "" {
-		t.Fatalf("identifier event kind/content = %d/%q, want %d/empty", identifier.Kind, identifier.Content, kindNIP78)
-	}
-	if len(identifier.Tags) != 1 || len(identifier.Tags[0]) != 2 || identifier.Tags[0][0] != "d" || identifier.Tags[0][1] != defaultZentenProfileAppID {
-		t.Fatalf("identifier tags = %#v", identifier.Tags)
-	}
-
-	ethereum := events[1]
+	ethereum := events[0]
 	if ethereum.Kind != kindNIP78 || ethereum.Content != "0xexample" {
 		t.Fatalf("ethereum event kind/content = %d/%q, want %d/0xexample", ethereum.Kind, ethereum.Content, kindNIP78)
 	}
@@ -292,6 +284,92 @@ func TestBuildZentenProfileEvents(t *testing.T) {
 	}
 	if ethereum.Tags[0][0] != "d" || ethereum.Tags[0][1] != "ethereum" || ethereum.Tags[1][0] != "i" || ethereum.Tags[1][1] != zentenProfileITag {
 		t.Fatalf("ethereum tags = %#v", ethereum.Tags)
+	}
+}
+
+func TestZentenProfileRandomIndex(t *testing.T) {
+	t.Parallel()
+
+	for range 100 {
+		got, err := zentenProfileRandomIndex(1, 9)
+		if err != nil {
+			t.Fatalf("zentenProfileRandomIndex: %v", err)
+		}
+		if got < 1 || got > 9 {
+			t.Fatalf("zentenProfileRandomIndex returned %d, want 1..9", got)
+		}
+	}
+
+	got, err := zentenProfileRandomIndex(7, 7)
+	if err != nil {
+		t.Fatalf("zentenProfileRandomIndex singleton: %v", err)
+	}
+	if got != 7 {
+		t.Fatalf("zentenProfileRandomIndex singleton returned %d, want 7", got)
+	}
+}
+
+func TestZentenProfileBitcoinAddressUsesRandomIndex1To99(t *testing.T) {
+	t.Parallel()
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	mnemonic, err := seedify.ToMnemonicWithLength(&key, 24, "", false, 0) //nolint:mnd
+	if err != nil {
+		t.Fatalf("mnemonic: %v", err)
+	}
+
+	addr, index, err := zentenProfileBitcoinAddress(mnemonic)
+	if err != nil {
+		t.Fatalf("zentenProfileBitcoinAddress: %v", err)
+	}
+	if index < 1 || index > zentenProfileBitcoinDailyAddressMax {
+		t.Fatalf("bitcoin index = %d, want 1..%d", index, zentenProfileBitcoinDailyAddressMax)
+	}
+	wantAddr, err := seedify.DeriveBitcoinAddressNativeSegwitAtIndex(mnemonic, "", index)
+	if err != nil {
+		t.Fatalf("derive expected bitcoin address: %v", err)
+	}
+	if addr != wantAddr {
+		t.Fatalf("bitcoin address = %s, want index %d address %s", addr, index, wantAddr)
+	}
+}
+
+func TestZentenProfileMoneroUsesCurrentDaySubaddress1To9(t *testing.T) {
+	t.Parallel()
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	date := time.Date(2026, time.June, 19, 0, 0, 0, 0, time.UTC)
+	mnemonic, err := seedify.ToMnemonicWithLength(&key, 16, "", false, birthdayFromDate(date)) //nolint:mnd
+	if err != nil {
+		t.Fatalf("polyseed mnemonic: %v", err)
+	}
+
+	addr, index, err := zentenProfileMoneroSubaddress(mnemonic)
+	if err != nil {
+		t.Fatalf("zentenProfileMoneroSubaddress: %v", err)
+	}
+	if index < 1 || index > zentenProfileMoneroDailySubaddressMax {
+		t.Fatalf("monero index = %d, want 1..%d", index, zentenProfileMoneroDailySubaddressMax)
+	}
+	primaryAddr, err := seedify.DeriveMoneroAddress(mnemonic)
+	if err != nil {
+		t.Fatalf("derive primary monero address: %v", err)
+	}
+	if addr == primaryAddr {
+		t.Fatalf("monero address = primary address %s, want subaddress", addr)
+	}
+	wantAddr, err := seedify.DeriveMoneroSubaddressAtIndex(mnemonic, index-1)
+	if err != nil {
+		t.Fatalf("derive expected monero subaddress: %v", err)
+	}
+	if addr != wantAddr {
+		t.Fatalf("monero address = %s, want subaddress %d %s", addr, index, wantAddr)
 	}
 }
 
