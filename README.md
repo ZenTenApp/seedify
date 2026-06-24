@@ -216,6 +216,12 @@ sub, _ := seedify.DeriveMoneroSubaddressAtIndex(polyseed, 1) // 8...
 keys, _ := seedify.DeriveMoneroKeys(polyseed, 5)
 fmt.Println(keys.PrimaryAddress) // 4...
 fmt.Println(keys.Subaddresses)   // [8..., 8..., 8..., 8..., 8...]
+
+// Feather-compatible Monero seed offset passphrase.
+// This is NOT seedify's --seed-passphrase; it is applied only during
+// Monero address derivation/restoration.
+offsetKeys, _ := seedify.DeriveMoneroKeysWithSeedOffset(polyseed, 5, "my-offset")
+fmt.Println(offsetKeys.PrimaryAddress) // 4... different wallet
 ```
 
 ## API Reference
@@ -290,8 +296,13 @@ The full API documentation is available on
 | Function | Description |
 |----------|-------------|
 | `DeriveMoneroAddress(mnemonic)` | Primary Monero address from a 16-word Polyseed |
+| `DeriveMoneroAddressWithSeedOffset(mnemonic, seedOffset)` | Primary Monero address from a 16-word Polyseed with Feather-compatible seed offset |
 | `DeriveMoneroSubaddressAtIndex(mnemonic, index)` | Monero subaddress at a given index |
+| `DeriveMoneroSubaddressAtIndexWithSeedOffset(mnemonic, index, seedOffset)` | Monero subaddress at a given index with Feather-compatible seed offset |
 | `DeriveMoneroKeys(mnemonic, numSubaddresses)` | Primary address + N subaddresses |
+| `DeriveMoneroKeysWithSeedOffset(mnemonic, numSubaddresses, seedOffset)` | Primary address + N subaddresses with Feather-compatible seed offset |
+| `DeriveMoneroKeysFromLegacySeed(mnemonic, numSubaddresses)` | Primary address + N subaddresses from a 25-word Monero legacy seed |
+| `DeriveMoneroKeysFromLegacySeedWithSeedOffset(mnemonic, numSubaddresses, seedOffset)` | Primary address + N subaddresses from a 25-word Monero legacy seed with Feather-compatible seed offset |
 
 #### Other Chains
 
@@ -328,6 +339,7 @@ seedify ~/.ssh/id_ed25519 --full
 seedify ~/.ssh/id_ed25519 --sshkey-qr
 seedify ~/.ssh/id_ed25519 --brave
 seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025
+seedify ~/.ssh/id_ed25519 --xmr --xmr-seed-offset "my-offset" --polyseed-year 2025
 seedify ~/.ssh/id_ed25519 --to-dnssec --dnssec-domain example.com --dnssec-ksk --output ./dnssec-keys
 cat ~/.ssh/id_ed25519 | seedify --words 18
 ```
@@ -368,6 +380,8 @@ seed phrase generation entirely.
 | `--sol` | Derive Solana address |
 | `--tron` | Derive Tron address |
 | `--xmr` | Derive Monero address from Polyseed |
+| `--xmr-legacy` | Derive Monero address from a 25-word legacy seed |
+| `--xmr-seed-offset` | Feather-compatible Monero seed offset passphrase for Monero address derivation |
 | `--sshkey-qr` | Print only the encrypted OpenSSH private key PEM, followed by a terminal QR code containing that PEM text |
 | `--zentenprofile` | Output public keys and addresses as DNS JSON |
 | `--to-dnssec` | Derive a DNSSEC RSASHA256 keypair; use with `--dnssec-domain`, `--dnssec-ksk`/`--dnssec-zsk`, and optional `--output <dir>` |
@@ -423,6 +437,11 @@ Most shells (bash, zsh) ignore commands that start with a space when
 - **Seed passphrase**: Use `--seed-passphrase` (CLI) or the `seedPassphrase`
   parameter (library) to add entropy beyond the SSH key alone. Different
   passphrases produce completely different mnemonics.
+- **Monero seed offset**: `--xmr-seed-offset` is different from
+  `--seed-passphrase`. It does not change the generated Polyseed or legacy seed;
+  it applies Monero's Feather-compatible seed offset passphrase when deriving
+  Monero addresses. To restore that wallet in Feather, enter the shown Monero
+  seed plus the exact same seed offset passphrase.
 
 ## License
 

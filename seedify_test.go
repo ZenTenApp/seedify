@@ -631,6 +631,56 @@ func TestDeriveMoneroAddress_DifferentMnemonicsProduceDifferentAddresses(t *test
 	is.True(addr1 != addr2)
 }
 
+func TestDeriveMoneroKeysWithSeedOffset(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	polyseed, err := ToMnemonicWithLength(&key, 16, "", false, PolyseedDefaultBirthday)
+	is.NoErr(err)
+
+	plain, err := DeriveMoneroKeys(polyseed, 2) //nolint:mnd
+	is.NoErr(err)
+
+	emptyOffset, err := DeriveMoneroKeysWithSeedOffset(polyseed, 2, "") //nolint:mnd
+	is.NoErr(err)
+	is.Equal(plain.PrimaryAddress, emptyOffset.PrimaryAddress)
+	is.Equal(plain.Subaddresses, emptyOffset.Subaddresses)
+
+	offset1, err := DeriveMoneroKeysWithSeedOffset(polyseed, 2, "hunter2") //nolint:mnd
+	is.NoErr(err)
+	offset2, err := DeriveMoneroKeysWithSeedOffset(polyseed, 2, "hunter2") //nolint:mnd
+	is.NoErr(err)
+	typoOffset, err := DeriveMoneroKeysWithSeedOffset(polyseed, 2, "Hunter2") //nolint:mnd
+	is.NoErr(err)
+
+	is.Equal(offset1.PrimaryAddress, offset2.PrimaryAddress)
+	is.Equal(offset1.Subaddresses, offset2.Subaddresses)
+	is.True(offset1.PrimaryAddress != plain.PrimaryAddress)
+	is.True(offset1.PrimaryAddress != typoOffset.PrimaryAddress)
+}
+
+func TestDeriveMoneroLegacyWithSeedOffsetMatchesPolyseedOffset(t *testing.T) {
+	is := is.New(t)
+
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	is.NoErr(err)
+
+	polyseed, err := ToMnemonicWithLength(&key, 16, "", false, PolyseedDefaultBirthday)
+	is.NoErr(err)
+	legacy, err := ToMoneroLegacySeedFromPolyseed(polyseed)
+	is.NoErr(err)
+
+	polyseedKeys, err := DeriveMoneroKeysWithSeedOffset(polyseed, 2, "correct horse battery staple") //nolint:mnd
+	is.NoErr(err)
+	legacyKeys, err := DeriveMoneroKeysFromLegacySeedWithSeedOffset(legacy, 2, "correct horse battery staple") //nolint:mnd
+	is.NoErr(err)
+
+	is.Equal(polyseedKeys.PrimaryAddress, legacyKeys.PrimaryAddress)
+	is.Equal(polyseedKeys.Subaddresses, legacyKeys.Subaddresses)
+}
+
 // TestToMoneroLegacySeedFromPolyseed_WordCount verifies the polyseed-derived legacy seed is 25 words.
 func TestToMoneroLegacySeedFromPolyseed_WordCount(t *testing.T) {
 	is := is.New(t)
