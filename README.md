@@ -312,8 +312,11 @@ The full API documentation is available on
 ## CLI Usage
 
 ```
-seedify <key-path> [flags]
+seedify <full-key-path> [flags]
 ```
+
+The key path must be absolute, or use `~` for your home directory. Bare key names
+are not searched in `~/.ssh`.
 
 ```
 seedify ~/.ssh/id_ed25519
