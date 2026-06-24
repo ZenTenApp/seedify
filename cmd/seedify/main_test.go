@@ -431,6 +431,12 @@ func TestCLIOutput_ChainFlagsOmitPreamble(t *testing.T) {
 			args:        []string{"--full"},
 			mustContain: []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS", "I2P DESTINATION"},
 		},
+		{
+			name:        "--sshkey-qr emits only private key PEM plus QR",
+			args:        []string{"--sshkey-qr"},
+			mustContain: []string{"BEGIN OPENSSH PRIVATE KEY", "END OPENSSH PRIVATE KEY"},
+			mustAbsent:  []string{"BEGIN OPENSSH PUBLIC KEY", "OPENSSH PRIVATE KEY HASH", "ED25519 SEED", "TOR ONION ADDRESS", "I2P DESTINATION", "[12 word seed phrase]"},
+		},
 	}
 
 	for _, tc := range tests {
