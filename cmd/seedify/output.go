@@ -29,16 +29,14 @@ func newCLIOut() *cliOut {
 		return o
 	}
 
-	white := lipgloss.Color(completeColor("#FFFFFF", "15", "15"))
-	public := lipgloss.Color(completeColor("#7CFC00", "118", "10"))
-	private := lipgloss.Color(completeColor("#FF0000", "196", "1"))
+	palette := terminalPalette()
 
-	o.sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(white)
-	o.labelStyle = lipgloss.NewStyle().Foreground(white)
-	o.valueStyle = lipgloss.NewStyle().Foreground(public)
-	o.sensitiveStyle = lipgloss.NewStyle().Foreground(private)
-	o.borderStyle = lipgloss.NewStyle().Foreground(white)
-	o.treeStyle = lipgloss.NewStyle().Foreground(white)
+	o.sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(palette.text)
+	o.labelStyle = lipgloss.NewStyle().Foreground(palette.text)
+	o.valueStyle = lipgloss.NewStyle().Foreground(palette.public)
+	o.sensitiveStyle = lipgloss.NewStyle().Foreground(palette.private)
+	o.borderStyle = lipgloss.NewStyle().Foreground(palette.text)
+	o.treeStyle = lipgloss.NewStyle().Foreground(palette.text)
 	return o
 }
 
@@ -48,6 +46,34 @@ const (
 )
 
 var out = newCLIOut()
+
+type cliPalette struct {
+	text    lipgloss.Color
+	public  lipgloss.Color
+	private lipgloss.Color
+}
+
+func terminalPalette() cliPalette {
+	if terminalHasDarkBackground() {
+		return cliPalette{
+			text:    lipgloss.Color(completeColor("#FFFFFF", "15", "15")),
+			public:  lipgloss.Color(completeColor("#7CFC00", "118", "10")),
+			private: lipgloss.Color(completeColor("#FF5555", "203", "9")),
+		}
+	}
+	return cliPalette{
+		text:    lipgloss.Color(completeColor("#111111", "233", "0")),
+		public:  lipgloss.Color(completeColor("#006B00", "22", "2")),
+		private: lipgloss.Color(completeColor("#B00020", "124", "1")),
+	}
+}
+
+func terminalHasDarkBackground() bool {
+	if !isatty.IsTerminal(os.Stdout.Fd()) {
+		return true
+	}
+	return termenv.HasDarkBackground()
+}
 
 // completeColor picks the best color string for the active terminal profile.
 // Lipgloss resolves colors differently per capability: 24-bit hex on true-color
