@@ -355,6 +355,7 @@ seed phrase generation entirely.
 |------|-------------|
 | `-w, --words` | Word counts to generate, comma-separated (12,15,16,18,21,24) |
 | `--seed-passphrase` | Combine with SSH key seed for additional entropy |
+| `--config` | INI config file for color overrides (default: `~/.seedify.ini`) |
 | `--brave` | Generate 25-word Brave Sync phrase |
 | `--full` | Print all word counts and all chain derivations (with full preamble) |
 | `--nostr` | Derive Nostr keys (npub/nsec) |
@@ -371,6 +372,29 @@ seed phrase generation entirely.
 | `--blockchains` | Comma-separated labels to publish with `--zentenprofile --publish`; default is all labels |
 | `--polyseed-year` | Override Polyseed birthday year (default: current year) |
 | `-l, --language` | Mnemonic language (default: en) |
+
+### Color config
+
+TTY output uses colors chosen for the detected terminal background. You can override
+label/border text, public values, and private/sensitive values with an INI file.
+By default, seedify reads `~/.seedify.ini` if it exists. Use `--config` to choose a
+different file:
+
+```bash
+seedify ~/.ssh/id_ed25519 --config ./seedify.ini
+```
+
+Example config:
+
+```ini
+[colors]
+labels = #d0d0d0
+public = #00ff88
+private = #ff3366
+```
+
+Values may be `#RRGGBB` hex colors or ANSI color numbers from `0` to `255`.
+`NO_COLOR=1` disables styling and ignores configured colors.
 
 ### Security Tip
 

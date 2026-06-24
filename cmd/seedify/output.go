@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -23,13 +27,25 @@ type cliOut struct {
 }
 
 func newCLIOut() *cliOut {
+	o, _ := newCLIOutWithConfig("")
+	return o
+}
+
+func newCLIOutWithConfig(path string) (*cliOut, error) {
 	color := isatty.IsTerminal(os.Stdout.Fd()) && os.Getenv("NO_COLOR") == ""
 	o := &cliOut{color: color}
 	if !color {
-		return o
+		return o, nil
 	}
 
 	palette := terminalPalette()
+	if path != "" {
+		var err error
+		palette, err = applyINIColorOverrides(palette, path)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	o.sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(palette.text)
 	o.labelStyle = lipgloss.NewStyle().Foreground(palette.text)
@@ -37,7 +53,7 @@ func newCLIOut() *cliOut {
 	o.sensitiveStyle = lipgloss.NewStyle().Foreground(palette.private)
 	o.borderStyle = lipgloss.NewStyle().Foreground(palette.text)
 	o.treeStyle = lipgloss.NewStyle().Foreground(palette.text)
-	return o
+	return o, nil
 }
 
 const (
@@ -73,6 +89,130 @@ func terminalHasDarkBackground() bool {
 		return true
 	}
 	return termenv.HasDarkBackground()
+}
+
+func configureCLIOutput(configExplicit bool) error {
+	path := strings.TrimSpace(configPath)
+	if path == "" {
+		out = newCLIOut()
+		return nil
+	}
+
+	expanded, err := expandPath(path)
+	if err != nil {
+		return err
+	}
+
+	if !configExplicit {
+		if _, statErr := os.Stat(expanded); errorsIsNotExist(statErr) {
+			out = newCLIOut()
+			return nil
+		}
+	}
+
+	configuredOut, err := newCLIOutWithConfig(expanded)
+	if err != nil {
+		return err
+	}
+	out = configuredOut
+	return nil
+}
+
+func expandPath(path string) (string, error) {
+	if path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("could not resolve home directory: %w", err)
+		}
+		return home, nil
+	}
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("could not resolve home directory: %w", err)
+		}
+		return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
+	}
+	return path, nil
+}
+
+func errorsIsNotExist(err error) bool {
+	return err != nil && os.IsNotExist(err)
+}
+
+var hexColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+func applyINIColorOverrides(palette cliPalette, path string) (cliPalette, error) {
+	colors, err := readINIColors(path)
+	if err != nil {
+		return palette, err
+	}
+	for key, value := range colors {
+		color, colorErr := parseConfigColor(value)
+		if colorErr != nil {
+			return palette, fmt.Errorf("invalid color for colors.%s: %w", key, colorErr)
+		}
+		switch key {
+		case "labels":
+			palette.text = color
+		case "public":
+			palette.public = color
+		case "private":
+			palette.private = color
+		}
+	}
+	return palette, nil
+}
+
+func readINIColors(path string) (map[string]string, error) {
+	f, err := os.Open(path) //nolint:gosec // User-configurable CLI config path.
+	if err != nil {
+		return nil, fmt.Errorf("could not read config %s: %w", path, err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	colors := map[string]string{}
+	section := ""
+	scanner := bufio.NewScanner(f)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]")))
+			continue
+		}
+		if section != "colors" {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid config %s:%d: expected key = value", path, lineNo)
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key != "labels" && key != "public" && key != "private" {
+			continue
+		}
+		colors[key] = strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("could not read config %s: %w", path, err)
+	}
+	return colors, nil
+}
+
+func parseConfigColor(value string) (lipgloss.Color, error) {
+	if hexColorPattern.MatchString(value) {
+		return lipgloss.Color(value), nil
+	}
+	n, err := strconv.Atoi(value)
+	if err == nil && n >= 0 && n <= 255 {
+		return lipgloss.Color(value), nil
+	}
+	return "", fmt.Errorf("%q; expected #RRGGBB or ANSI color number 0-255", value)
 }
 
 // completeColor picks the best color string for the active terminal profile.

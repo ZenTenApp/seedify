@@ -82,6 +82,7 @@ var (
 	language       string
 	wordCountStr   string
 	seedPassphrase string
+	configPath     string
 	brave          bool
 	full           bool
 	nostr          bool
@@ -171,6 +172,10 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				if fi, _ := os.Stdin.Stat(); (fi.Mode() & os.ModeNamedPipe) == 0 {
 					return cmd.Help()
 				}
+			}
+
+			if err := configureCLIOutput(cmd.Flags().Changed("config")); err != nil {
+				return err
 			}
 
 			if err := setLanguage(language); err != nil {
@@ -544,6 +549,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&language, "language", "l", "en", "Language")
 	rootCmd.PersistentFlags().StringVarP(&wordCountStr, "words", "w", "", "Word counts to generate (comma-separated: 12,15,18,21,24)")
 	rootCmd.PersistentFlags().StringVar(&seedPassphrase, "seed-passphrase", "", "Passphrase to combine with SSH key seed for additional entropy")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "~/.seedify.ini", "INI config file for color overrides")
 	rootCmd.PersistentFlags().BoolVar(&brave, "brave", false, "Generate 25-word phrase with Brave Sync")
 	rootCmd.PersistentFlags().BoolVar(&full, "full", false, "Print full output (all word counts, Nostr keys, crypto derivations)")
 	rootCmd.PersistentFlags().BoolVar(&nostr, "nostr", false, "Derive Nostr keys (npub/nsec) from seed phrase.")
