@@ -312,8 +312,11 @@ The full API documentation is available on
 ## CLI Usage
 
 ```
-seedify <key-path> [flags]
+seedify <full-key-path> [flags]
 ```
+
+The key path must be absolute, or use `~` for your home directory. Bare key names
+are not searched in `~/.ssh`.
 
 ```
 seedify ~/.ssh/id_ed25519
@@ -322,6 +325,7 @@ seedify ~/.ssh/id_ed25519 --words 12,24
 seedify ~/.ssh/id_ed25519 --nostr
 seedify ~/.ssh/id_ed25519 --btc --eth --sol
 seedify ~/.ssh/id_ed25519 --full
+seedify ~/.ssh/id_ed25519 --sshkey-qr
 seedify ~/.ssh/id_ed25519 --brave
 seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025
 seedify ~/.ssh/id_ed25519 --to-dnssec --dnssec-domain example.com --dnssec-ksk --output ./dnssec-keys
@@ -333,6 +337,9 @@ cat ~/.ssh/id_ed25519 | seedify --words 18
 **Bare default** (`seedify <key>`): prints SSH key material (public key, private key,
 Ed25519 seed, fingerprint) followed by the full curated set of seed phrases (12-word,
 16-word Polyseed, 24-word, Nostr keys, Monero legacy, Beldex, Brave Sync).
+
+**`--sshkey-qr`**: prints only the encrypted OpenSSH private key PEM, followed by a
+terminal QR code containing that same PEM text.
 
 **`--full`**: same SSH/Tor/I2P preamble as the default, then all word counts and all
 chain derivations.
@@ -351,6 +358,7 @@ seed phrase generation entirely.
 |------|-------------|
 | `-w, --words` | Word counts to generate, comma-separated (12,15,16,18,21,24) |
 | `--seed-passphrase` | Combine with SSH key seed for additional entropy |
+| `--config` | INI config file for color overrides (default: `~/.seedify.ini`) |
 | `--brave` | Generate 25-word Brave Sync phrase |
 | `--full` | Print all word counts and all chain derivations (with full preamble) |
 | `--nostr` | Derive Nostr keys (npub/nsec) |
@@ -360,12 +368,36 @@ seed phrase generation entirely.
 | `--sol` | Derive Solana address |
 | `--tron` | Derive Tron address |
 | `--xmr` | Derive Monero address from Polyseed |
+| `--sshkey-qr` | Print only the encrypted OpenSSH private key PEM, followed by a terminal QR code containing that PEM text |
 | `--zentenprofile` | Output public keys and addresses as DNS JSON |
 | `--to-dnssec` | Derive a DNSSEC RSASHA256 keypair; use with `--dnssec-domain`, `--dnssec-ksk`/`--dnssec-zsk`, and optional `--output <dir>` |
-| `--publish` | Publish ZentenProfile NIP-78 Kind 30078 events to relays (with `--zentenprofile`): one identifier event (`d=app.zentenprofile.identifier`) and one event per selected label |
+| `--publish` | Publish ZentenProfile NIP-78 Kind 30078 events to relays (with `--zentenprofile`): one event per selected label |
 | `--blockchains` | Comma-separated labels to publish with `--zentenprofile --publish`; default is all labels |
 | `--polyseed-year` | Override Polyseed birthday year (default: current year) |
 | `-l, --language` | Mnemonic language (default: en) |
+
+### Color config
+
+TTY output uses colors chosen for the detected terminal background. You can override
+label/border text, public values, and private/sensitive values with an INI file.
+By default, seedify reads `~/.seedify.ini` if it exists. Use `--config` to choose a
+different file:
+
+```bash
+seedify ~/.ssh/id_ed25519 --config ./seedify.ini
+```
+
+Example config:
+
+```ini
+[colors]
+labels = #d0d0d0
+public = #00ff88
+private = #ff3366
+```
+
+Values may be `#RRGGBB` hex colors or ANSI color numbers from `0` to `255`.
+`NO_COLOR=1` disables styling and ignores configured colors.
 
 ### Security Tip
 

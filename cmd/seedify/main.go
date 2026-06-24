@@ -30,6 +30,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/mattn/go-tty"
+	"github.com/mdp/qrterminal/v3"
 	mcobra "github.com/muesli/mango-cobra"
 	"github.com/muesli/roff"
 	nostrpkg "github.com/nbd-wtf/go-nostr"
@@ -81,6 +82,7 @@ var (
 	language       string
 	wordCountStr   string
 	seedPassphrase string
+	configPath     string
 	brave          bool
 	full           bool
 	nostr          bool
@@ -92,6 +94,7 @@ var (
 	monero         bool
 	moneroLegacy   bool
 	beldex         bool
+	sshKeyQR       bool
 	zentenprofile  bool
 	publishRelays  string
 	blockchains    string
@@ -169,6 +172,10 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				if fi, _ := os.Stdin.Stat(); (fi.Mode() & os.ModeNamedPipe) == 0 {
 					return cmd.Help()
 				}
+			}
+
+			if err := configureCLIOutput(cmd.Flags().Changed("config")); err != nil {
+				return err
 			}
 
 			if err := setLanguage(language); err != nil {
@@ -257,6 +264,18 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			// --publish requires --zentenprofile
 			if publishRelays != "" && !zentenprofile {
 				return errors.New("--publish requires --zentenprofile")
+			}
+
+			// Handle --sshkey-qr: print only the encrypted OpenSSH private key and its QR code.
+			if sshKeyQR {
+				err := runSSHKeyQR(keyPath)
+				if err != nil {
+					if strings.Contains(err.Error(), "key is not password-protected") {
+						return formatPasswordError(err)
+					}
+					return err
+				}
+				return nil
 			}
 
 			// Handle --brave flag: generate 25-word phrase with Brave Sync
@@ -530,6 +549,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&language, "language", "l", "en", "Language")
 	rootCmd.PersistentFlags().StringVarP(&wordCountStr, "words", "w", "", "Word counts to generate (comma-separated: 12,15,18,21,24)")
 	rootCmd.PersistentFlags().StringVar(&seedPassphrase, "seed-passphrase", "", "Passphrase to combine with SSH key seed for additional entropy")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "~/.seedify.ini", "INI config file for color overrides")
 	rootCmd.PersistentFlags().BoolVar(&brave, "brave", false, "Generate 25-word phrase with Brave Sync")
 	rootCmd.PersistentFlags().BoolVar(&full, "full", false, "Print full output (all word counts, Nostr keys, crypto derivations)")
 	rootCmd.PersistentFlags().BoolVar(&nostr, "nostr", false, "Derive Nostr keys (npub/nsec) from seed phrase.")
@@ -541,6 +561,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&monero, "xmr", false, "Derive Monero address from 16-word polyseed")
 	rootCmd.PersistentFlags().BoolVar(&moneroLegacy, "xmr-legacy", false, "Derive Monero address from 25-word legacy seed (shown alongside --xmr polyseed output)")
 	rootCmd.PersistentFlags().BoolVar(&beldex, "bdx", false, "Derive Beldex (BDX) address from 25-word legacy seed (same seed format as --xmr-legacy)")
+	rootCmd.PersistentFlags().BoolVar(&sshKeyQR, "sshkey-qr", false, "Print the encrypted OpenSSH private key and display it as a terminal QR code")
 	rootCmd.PersistentFlags().BoolVar(&zentenprofile, "zentenprofile", false, "Output public keys and addresses as DNS JSON to stdout")
 	rootCmd.PersistentFlags().StringVar(&publishRelays, "publish", "", "When used with --zentenprofile: publish NIP-78 Kind 30078 events to these relays (comma-separated, e.g. relay.primal.net,relay.damus.io)")
 	rootCmd.PersistentFlags().StringVar(&blockchains, "blockchains", "", "When used with --zentenprofile --publish: comma-separated NIP-78 labels to publish. Default: all labels")
@@ -1440,71 +1461,6 @@ func main() {
 	}
 }
 
-// getDefaultSSHDir returns the default SSH directory for the current platform.
-// On Unix-like systems (Linux, macOS), this is ~/.ssh/.
-// On Windows, this is %USERPROFILE%\.ssh\.
-func getDefaultSSHDir() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("could not get home directory: %w", err)
-	}
-	return filepath.Join(homeDir, ".ssh"), nil
-}
-
-// resolveKeyPath attempts to resolve a key path. If the path doesn't exist
-// and appears to be just a filename (no directory separators), it will check
-// the default SSH directory for a key with that name.
-func resolveKeyPath(path string) (string, error) {
-	// If path is "-", use it as-is
-	if path == "-" {
-		return path, nil
-	}
-
-	// Check if the path exists as-is
-	if _, err := os.Stat(path); err == nil {
-		return path, nil
-	}
-
-	// Check if path is just a filename (no directory separators)
-	// Clean the path first to normalize it, then check if the directory
-	// component is "." (current directory) or empty
-	cleanedPath := filepath.Clean(path)
-	dir := filepath.Dir(cleanedPath)
-
-	// If the directory is not "." or empty, it's a path with directory components
-	// - don't check default SSH directory
-	if dir != "." && dir != "" {
-		return "", fmt.Errorf("could not open %s: %w", path, os.ErrNotExist)
-	}
-
-	// Also check if the original path explicitly starts with relative path indicators
-	// These are relative paths that should not be checked in default SSH directory
-	// Check for both Unix-style (./, ../) and Windows-style (.\, ..\) prefixes
-	pathLower := strings.ToLower(path)
-	if strings.HasPrefix(pathLower, "./") || strings.HasPrefix(pathLower, "../") ||
-		strings.HasPrefix(pathLower, ".\\") || strings.HasPrefix(pathLower, "..\\") {
-		return "", fmt.Errorf("could not open %s: %w", path, os.ErrNotExist)
-	}
-
-	// Path appears to be just a filename, try default SSH directory
-	sshDir, err := getDefaultSSHDir()
-	if err != nil {
-		return "", fmt.Errorf("could not determine SSH directory: %w", err)
-	}
-
-	// Use the cleaned path (or original if it's just a filename) to construct the default path
-	filename := filepath.Base(cleanedPath)
-	defaultPath := filepath.Join(sshDir, filename)
-
-	// Check if the file exists in the default SSH directory
-	if _, err := os.Stat(defaultPath); err == nil {
-		return defaultPath, nil
-	}
-
-	// Key not found — exit with a warning rather than attempting to generate one
-	return "", fmt.Errorf("warning: key not found: %s does not exist in the current directory or %s", path, sshDir)
-}
-
 func openFileOrStdin(path string) (*os.File, error) {
 	if path == "-" {
 		return os.Stdin, nil
@@ -1514,10 +1470,12 @@ func openFileOrStdin(path string) (*os.File, error) {
 		return os.Stdin, nil
 	}
 
-	// Resolve the key path (check default SSH directory if needed)
-	resolvedPath, err := resolveKeyPath(path)
+	resolvedPath, err := expandPath(path)
 	if err != nil {
 		return nil, err
+	}
+	if !filepath.IsAbs(resolvedPath) {
+		return nil, fmt.Errorf("key path must be absolute; specify the full path to the key: %s", path)
 	}
 
 	// G304: resolvedPath is user-provided input, which is expected for a CLI tool
@@ -1535,6 +1493,41 @@ func parsePrivateKey(bts, pass []byte) (interface{}, error) {
 	}
 	//nolint: wrapcheck
 	return ssh.ParseRawPrivateKeyWithPassphrase(bts, pass)
+}
+
+// runSSHKeyQR prints the encrypted OpenSSH private key exactly as stored (trimmed
+// of surrounding whitespace), followed by a terminal QR code containing the same
+// PEM text.
+func runSSHKeyQR(path string) error {
+	f, err := openFileOrStdin(path)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	bts, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+
+	isProtected, err := isKeyPasswordProtected(bts)
+	if err == nil && !isProtected {
+		return fmt.Errorf("key is not password-protected: keys are required to be password-protected")
+	}
+	if err != nil {
+		return err
+	}
+
+	keyPEM := strings.TrimSpace(string(bts))
+	fmt.Println(keyPEM)
+	fmt.Println()
+	qrterminal.GenerateWithConfig(keyPEM, qrterminal.Config{
+		Level:      qrterminal.L,
+		Writer:     os.Stdout,
+		HalfBlocks: true,
+		QuietZone:  2, //nolint:mnd // Compact terminal QR while retaining a scan-friendly border.
+	})
+	return nil
 }
 
 // generateBraveSyncPhrase generates a 25-word seed phrase with Brave Sync.
@@ -1604,7 +1597,8 @@ func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte, npub 
 	}
 
 	pubB64 := base64.StdEncoding.EncodeToString(sshPubKey.Marshal())
-	out.PEMBlock("OPENSSH PUBLIC KEY", "ssh-ed25519 "+pubB64+" "+npub, false)
+	publicKeyLine := "ssh-ed25519 " + pubB64 + " " + npub
+	out.PEMBlock("OPENSSH PUBLIC KEY", publicKeyLine, false)
 
 	// pem.Decode extracts the raw OpenSSH key bytes so we can re-encode them
 	// as a single unwrapped base64 line instead of the default 64-char wrapping.
