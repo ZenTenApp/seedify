@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"ekyu.moe/cryptonight"
 	"filippo.io/edwards25519"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/bech32"
@@ -1721,62 +1722,31 @@ func deriveEd25519Key(seed []byte, path []uint32) []byte {
 //   - address: The Monero primary address (starts with "4")
 //   - error: Any error that occurred during derivation
 func DeriveMoneroAddress(mnemonic string) (string, error) {
-	// Decode the polyseed mnemonic (auto-detects language)
-	seed, _, err := polyseed.Decode(mnemonic, polyseed.CoinMonero)
+	return DeriveMoneroAddressWithSeedOffset(mnemonic, "")
+}
+
+// DeriveMoneroAddressWithSeedOffset derives a Monero address from a polyseed mnemonic phrase
+// and optional Feather-compatible seed offset passphrase.
+func DeriveMoneroAddressWithSeedOffset(mnemonic string, seedOffset string) (string, error) {
+	keys, err := DeriveMoneroKeysWithSeedOffset(mnemonic, 0, seedOffset)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode polyseed mnemonic: %w", err)
+		return "", err
 	}
-	defer seed.Free()
-
-	// Derive the spend private key (32 bytes) from polyseed.
-	// The polyseed Keygen() function returns seed bytes that need to be
-	// reduced to a valid Ed25519 scalar using sc_reduce32.
-	const polyseedKeySize = 32
-	spendKeyBytes := seed.Keygen(polyseed.CoinMonero, polyseedKeySize)
-
-	// Reduce the key bytes to a valid Ed25519 scalar.
-	// This performs sc_reduce32 without any hashing - the key bytes are used directly.
-	reducedKey := scReduce32(spendKeyBytes)
-
-	// Create Monero private key from the reduced bytes.
-	spendPrivKey, err := utils.NewPrivateKey(hex.EncodeToString(reducedKey))
-	if err != nil {
-		return "", fmt.Errorf("failed to create spend private key: %w", err)
-	}
-
-	// Create Monero key pair from the spend private key
-	// This automatically derives the view key from the spend key
-	keyPair, err := utils.NewFullKeyPairSpendPrivateKey(spendPrivKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to create Monero key pair: %w", err)
-	}
-
-	// Get the public keys
-	spendPubKey := keyPair.SpendKeyPair().PublicKey().Bytes()
-	viewPubKey := keyPair.ViewKeyPair().PublicKey().Bytes()
-
-	// Build the Monero primary address using the standard 0x12 mainnet prefix.
-	return buildMoneroAddress(0x12, spendPubKey, viewPubKey) //nolint:mnd
+	return keys.PrimaryAddress, nil
 }
 
 // DeriveMoneroSubaddressAtIndex derives a Monero receiving subaddress at the given index.
 // Index 0 maps to subaddress (0,1), index 1 to (0,2), etc. Valid range: 0-19 for DNS output.
 func DeriveMoneroSubaddressAtIndex(mnemonic string, index uint32) (string, error) {
-	seed, _, err := polyseed.Decode(mnemonic, polyseed.CoinMonero)
+	return DeriveMoneroSubaddressAtIndexWithSeedOffset(mnemonic, index, "")
+}
+
+// DeriveMoneroSubaddressAtIndexWithSeedOffset derives a Monero receiving subaddress
+// at the given index using an optional Feather-compatible seed offset passphrase.
+func DeriveMoneroSubaddressAtIndexWithSeedOffset(mnemonic string, index uint32, seedOffset string) (string, error) {
+	keyPair, err := moneroKeyPairFromPolyseed(mnemonic, seedOffset)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode polyseed mnemonic: %w", err)
-	}
-	defer seed.Free()
-	const polyseedKeySize = 32
-	spendKeyBytes := seed.Keygen(polyseed.CoinMonero, polyseedKeySize)
-	reducedKey := scReduce32(spendKeyBytes)
-	spendPrivKey, err := utils.NewPrivateKey(hex.EncodeToString(reducedKey))
-	if err != nil {
-		return "", fmt.Errorf("failed to create spend private key: %w", err)
-	}
-	keyPair, err := utils.NewFullKeyPairSpendPrivateKey(spendPrivKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to create Monero key pair: %w", err)
+		return "", err
 	}
 	viewSecKey := keyPair.ViewKeyPair().PrivateKey().Bytes()
 	spendPubKey := keyPair.SpendKeyPair().PublicKey().Bytes()
@@ -1804,57 +1774,17 @@ type MoneroKeys struct {
 //   - MoneroKeys: Contains the primary address and subaddresses
 //   - error: Any error that occurred during derivation
 func DeriveMoneroKeys(mnemonic string, numSubaddresses int) (*MoneroKeys, error) {
-	// Decode the polyseed mnemonic (auto-detects language)
-	seed, _, err := polyseed.Decode(mnemonic, polyseed.CoinMonero)
+	return DeriveMoneroKeysWithSeedOffset(mnemonic, numSubaddresses, "")
+}
+
+// DeriveMoneroKeysWithSeedOffset derives a Monero primary address and subaddresses
+// from a polyseed mnemonic using an optional Feather-compatible seed offset passphrase.
+func DeriveMoneroKeysWithSeedOffset(mnemonic string, numSubaddresses int, seedOffset string) (*MoneroKeys, error) {
+	keyPair, err := moneroKeyPairFromPolyseed(mnemonic, seedOffset)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode polyseed mnemonic: %w", err)
+		return nil, err
 	}
-	defer seed.Free()
-
-	// Derive the spend private key (32 bytes) from polyseed
-	const polyseedKeySize = 32
-	spendKeyBytes := seed.Keygen(polyseed.CoinMonero, polyseedKeySize)
-
-	// Reduce the key bytes to a valid Ed25519 scalar
-	reducedKey := scReduce32(spendKeyBytes)
-
-	// Create Monero private key from the reduced bytes
-	spendPrivKey, err := utils.NewPrivateKey(hex.EncodeToString(reducedKey))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create spend private key: %w", err)
-	}
-
-	// Create Monero key pair from the spend private key
-	keyPair, err := utils.NewFullKeyPairSpendPrivateKey(spendPrivKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Monero key pair: %w", err)
-	}
-
-	// Get the keys
-	viewSecKey := keyPair.ViewKeyPair().PrivateKey().Bytes()
-	spendPubKey := keyPair.SpendKeyPair().PublicKey().Bytes()
-	viewPubKey := keyPair.ViewKeyPair().PublicKey().Bytes()
-
-	// Build primary address
-	primaryAddr, err := buildMoneroAddress(0x12, spendPubKey, viewPubKey) //nolint:mnd
-	if err != nil {
-		return nil, fmt.Errorf("failed to build primary address: %w", err)
-	}
-
-	// Generate subaddresses
-	subaddresses := make([]string, 0, numSubaddresses)
-	for i := uint32(1); i <= uint32(numSubaddresses); i++ { //nolint:gosec // numSubaddresses is always small (single digits)
-		subaddr, err := deriveMoneroSubaddress(viewSecKey, spendPubKey, 0, i)
-		if err != nil {
-			return nil, fmt.Errorf("failed to derive subaddress (0,%d): %w", i, err)
-		}
-		subaddresses = append(subaddresses, subaddr)
-	}
-
-	return &MoneroKeys{
-		PrimaryAddress: primaryAddr,
-		Subaddresses:   subaddresses,
-	}, nil
+	return moneroKeysFromKeyPair(keyPair, numSubaddresses)
 }
 
 // ToMoneroLegacySeedFromPolyseed derives the Monero legacy 25-word (Electrum-style)
@@ -1984,11 +1914,58 @@ func ToMoneroLegacySeedWithPrefix(key *ed25519.PrivateKey, seedPassphrase string
 //   - mnemonic: A valid 25-word Monero legacy mnemonic (space-separated)
 //   - numSubaddresses: Number of subaddresses to generate (0 for none)
 func DeriveMoneroKeysFromLegacySeed(mnemonic string, numSubaddresses int) (*MoneroKeys, error) {
+	return DeriveMoneroKeysFromLegacySeedWithSeedOffset(mnemonic, numSubaddresses, "")
+}
+
+// DeriveMoneroKeysFromLegacySeedWithSeedOffset derives Monero addresses from a
+// 25-word Monero legacy mnemonic using an optional Feather-compatible seed offset passphrase.
+func DeriveMoneroKeysFromLegacySeedWithSeedOffset(mnemonic string, numSubaddresses int, seedOffset string) (*MoneroKeys, error) {
+	keyPair, err := moneroKeyPairFromLegacySeed(mnemonic, seedOffset)
+	if err != nil {
+		return nil, err
+	}
+	return moneroKeysFromKeyPair(keyPair, numSubaddresses)
+}
+
+func moneroKeyPairFromPolyseed(mnemonic string, seedOffset string) (*utils.FullKeyPair, error) {
+	seed, _, err := polyseed.Decode(mnemonic, polyseed.CoinMonero)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode polyseed mnemonic: %w", err)
+	}
+	defer seed.Free()
+
+	const polyseedKeySize = 32
+	spendKeyBytes := seed.Keygen(polyseed.CoinMonero, polyseedKeySize)
+	reducedKey := scReduce32(spendKeyBytes)
+	return moneroKeyPairFromSpendKey(reducedKey, seedOffset)
+}
+
+func moneroKeyPairFromLegacySeed(mnemonic string, seedOffset string) (*utils.FullKeyPair, error) {
 	seed, err := utils.NewSeedMnemonic(mnemonic, utils.English)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode Monero legacy mnemonic: %w", err)
 	}
-	keyPair := seed.FullKeyPair()
+	spendKey := seed.FullKeyPair().SpendKeyPair().PrivateKey().Bytes()
+	return moneroKeyPairFromSpendKey(spendKey, seedOffset)
+}
+
+func moneroKeyPairFromSpendKey(spendKey []byte, seedOffset string) (*utils.FullKeyPair, error) {
+	keyBytes, err := applyMoneroSeedOffset(spendKey, seedOffset)
+	if err != nil {
+		return nil, err
+	}
+	spendPrivKey, err := utils.NewPrivateKey(hex.EncodeToString(keyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create spend private key: %w", err)
+	}
+	keyPair, err := utils.NewFullKeyPairSpendPrivateKey(spendPrivKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Monero key pair: %w", err)
+	}
+	return keyPair, nil
+}
+
+func moneroKeysFromKeyPair(keyPair *utils.FullKeyPair, numSubaddresses int) (*MoneroKeys, error) {
 	viewSecKey := keyPair.ViewKeyPair().PrivateKey().Bytes()
 	spendPubKey := keyPair.SpendKeyPair().PublicKey().Bytes()
 	viewPubKey := keyPair.ViewKeyPair().PublicKey().Bytes()
@@ -2011,6 +1988,30 @@ func DeriveMoneroKeysFromLegacySeed(mnemonic string, numSubaddresses int) (*Mone
 		PrimaryAddress: primaryAddr,
 		Subaddresses:   subaddresses,
 	}, nil
+}
+
+func applyMoneroSeedOffset(spendKey []byte, seedOffset string) ([]byte, error) {
+	if len(spendKey) != 32 { //nolint:mnd
+		return nil, fmt.Errorf("monero seed offset: expected 32-byte spend key, got %d", len(spendKey))
+	}
+	keyScalar, err := edwards25519.NewScalar().SetCanonicalBytes(spendKey)
+	if err != nil {
+		return nil, fmt.Errorf("monero seed offset: invalid spend key scalar: %w", err)
+	}
+	if seedOffset == "" {
+		return keyScalar.Bytes(), nil
+	}
+
+	// Feather/Monero seed offsets use cryptonote::decrypt_key:
+	// cn_slow_hash(passphrase), then sc_sub(spend_key, hash) modulo l.
+	offsetHash := cryptonight.Sum([]byte(seedOffset), 0)
+	offsetScalar := scReduce32(offsetHash)
+	offset, err := edwards25519.NewScalar().SetCanonicalBytes(offsetScalar)
+	if err != nil {
+		return nil, fmt.Errorf("monero seed offset: invalid offset scalar: %w", err)
+	}
+
+	return edwards25519.NewScalar().Subtract(keyScalar, offset).Bytes(), nil
 }
 
 // Beldex address network prefixes.

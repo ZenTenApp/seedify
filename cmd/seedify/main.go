@@ -93,6 +93,7 @@ var (
 	tron           bool
 	monero         bool
 	moneroLegacy   bool
+	xmrSeedOffset  string
 	beldex         bool
 	sshKeyQR       bool
 	zentenprofile  bool
@@ -154,6 +155,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --polyseed-year 2024
   seedify ~/.ssh/id_ed25519 --polyseed-year 2024 --polyseed-month 6
   seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025
+  seedify ~/.ssh/id_ed25519 --xmr --xmr-seed-offset "my-offset" --polyseed-year 2025
   seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025 --polyseed-month 3
   cat ~/.ssh/id_ed25519 | seedify --words 18
   seedify ~/.ssh/id_ed25519 --to-rsa --output ~/.ssh/id_rsa_derived
@@ -261,6 +263,11 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				return runDerivePGPKey(keyPath)
 			}
 
+			// --xmr-seed-offset only applies to Monero address derivation.
+			if xmrSeedOffset != "" && !monero && !moneroLegacy && !full {
+				return errors.New("--xmr-seed-offset requires --xmr, --xmr-legacy, or --full")
+			}
+
 			// --publish requires --zentenprofile
 			if publishRelays != "" && !zentenprofile {
 				return errors.New("--publish requires --zentenprofile")
@@ -337,7 +344,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 					if err != nil {
 						return fmt.Errorf("invalid word counts: %w", err)
 					}
-					err = generateUnifiedOutput(keyPath, parsedCounts, seedPassphrase,
+					err = generateUnifiedOutput(keyPath, parsedCounts, seedPassphrase, xmrSeedOffset,
 						false, false, false, false, false, false, false, false, false, false, false)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
@@ -347,7 +354,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 					}
 				} else if hasDerivationFlags {
 					wc := buildWordCounts(bitcoin, ethereum, zcash, solana, tron, nostr, monero, polyseedAll)
-					err := generateUnifiedOutput(keyPath, wc, seedPassphrase,
+					err := generateUnifiedOutput(keyPath, wc, seedPassphrase, xmrSeedOffset,
 						nostr, false, bitcoin, ethereum, zcash, solana, tron, monero, moneroLegacy, beldex, false)
 					if err != nil {
 						if strings.Contains(err.Error(), "key is not password-protected") {
@@ -412,7 +419,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				deriveBdx = beldex
 			}
 
-			uErr := generateUnifiedOutput(keyPath, wordCounts, seedPassphrase, deriveNostr, showBrave, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy, deriveBdx, true)
+			uErr := generateUnifiedOutput(keyPath, wordCounts, seedPassphrase, xmrSeedOffset, deriveNostr, showBrave, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy, deriveBdx, true)
 			if uErr != nil && strings.Contains(uErr.Error(), "key is not password-protected") {
 				return formatPasswordError(uErr)
 			}
@@ -560,6 +567,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&tron, "tron", false, "Derive Tron address from 24-word seed phrase")
 	rootCmd.PersistentFlags().BoolVar(&monero, "xmr", false, "Derive Monero address from 16-word polyseed")
 	rootCmd.PersistentFlags().BoolVar(&moneroLegacy, "xmr-legacy", false, "Derive Monero address from 25-word legacy seed (shown alongside --xmr polyseed output)")
+	rootCmd.PersistentFlags().StringVar(&xmrSeedOffset, "xmr-seed-offset", "", "Feather-compatible Monero seed offset passphrase for --xmr/--xmr-legacy address derivation")
 	rootCmd.PersistentFlags().BoolVar(&beldex, "bdx", false, "Derive Beldex (BDX) address from 25-word legacy seed (same seed format as --xmr-legacy)")
 	rootCmd.PersistentFlags().BoolVar(&sshKeyQR, "sshkey-qr", false, "Print the encrypted OpenSSH private key and display it as a terminal QR code")
 	rootCmd.PersistentFlags().BoolVar(&zentenprofile, "zentenprofile", false, "Output public keys and addresses as DNS JSON to stdout")
@@ -1474,9 +1482,6 @@ func openFileOrStdin(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !filepath.IsAbs(resolvedPath) {
-		return nil, fmt.Errorf("key path must be absolute; specify the full path to the key: %s", path)
-	}
 
 	// G304: resolvedPath is user-provided input, which is expected for a CLI tool
 	f, err := os.Open(resolvedPath) //nolint:gosec
@@ -1495,9 +1500,9 @@ func parsePrivateKey(bts, pass []byte) (interface{}, error) {
 	return ssh.ParseRawPrivateKeyWithPassphrase(bts, pass)
 }
 
-// runSSHKeyQR prints the encrypted OpenSSH private key exactly as stored (trimmed
-// of surrounding whitespace), followed by a terminal QR code containing the same
-// PEM text.
+// runSSHKeyQR prints the encrypted OpenSSH private key with its base64 body on a
+// single unwrapped line, followed by a terminal QR code containing the same PEM
+// text.
 func runSSHKeyQR(path string) error {
 	f, err := openFileOrStdin(path)
 	if err != nil {
@@ -1518,7 +1523,11 @@ func runSSHKeyQR(path string) error {
 		return err
 	}
 
-	keyPEM := strings.TrimSpace(string(bts))
+	keyPEM, err := oneLinePrivateKeyPEM(bts)
+	if err != nil {
+		return err
+	}
+
 	fmt.Println(keyPEM)
 	fmt.Println()
 	qrterminal.GenerateWithConfig(keyPEM, qrterminal.Config{
@@ -1528,6 +1537,16 @@ func runSSHKeyQR(path string) error {
 		QuietZone:  2, //nolint:mnd // Compact terminal QR while retaining a scan-friendly border.
 	})
 	return nil
+}
+
+func oneLinePrivateKeyPEM(keyBytes []byte) (string, error) {
+	block, _ := pem.Decode(keyBytes)
+	if block == nil || block.Type != "OPENSSH PRIVATE KEY" {
+		return "", errors.New("failed to decode OpenSSH private key PEM block")
+	}
+
+	keyB64 := base64.StdEncoding.EncodeToString(block.Bytes)
+	return "-----BEGIN OPENSSH PRIVATE KEY-----\n" + keyB64 + "\n-----END OPENSSH PRIVATE KEY-----", nil
 }
 
 // generateBraveSyncPhrase generates a 25-word seed phrase with Brave Sync.
@@ -1935,7 +1954,7 @@ func readPassword(msg string) ([]byte, error) {
 // When deriveNostr is true, it derives Nostr keys directly from the SSH key (not from seed phrases).
 // When showBrave is true, it also displays the brave 24-word seed phrase at the end.
 // Crypto address flags (deriveBtc, deriveEth, deriveSol, deriveTron, deriveXmr) control which addresses to derive.
-func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase string, deriveNostr bool, showBrave bool, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy, deriveBdx bool, showPreamble bool) error {
+func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase string, xmrSeedOffset string, deriveNostr bool, showBrave bool, deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy, deriveBdx bool, showPreamble bool) error {
 	// Parse the key once
 	f, err := openFileOrStdin(keyPath)
 	if err != nil {
@@ -2025,13 +2044,14 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					fmt.Println()
 
 					if deriveXmr {
-						xmrKeys, xmrErr := seedify.DeriveMoneroKeys(g.mnemonic, 9) //nolint:mnd
+						xmrKeys, xmrErr := seedify.DeriveMoneroKeysWithSeedOffset(g.mnemonic, 9, xmrSeedOffset) //nolint:mnd
 						if xmrErr != nil {
 							return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%s → %s): %w",
 								g.startDate.Format("2006-01-02"), g.endDate.Format("2006-01-02"), xmrErr)
 						}
 
-						fmt.Printf("[monero addresses from 16 word polyseed (%s → %s)]\n",
+						fmt.Printf("[%s (%s → %s)]\n",
+							moneroAddressSectionTitle("monero addresses from 16 word polyseed", xmrSeedOffset),
 							g.startDate.Format("2006-01-02"), g.endDate.Format("2006-01-02"))
 						fmt.Println()
 						fmt.Printf("%s (primary address)\n", xmrKeys.PrimaryAddress)
@@ -2047,7 +2067,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						fmt.Println(g.legacySeed)
 						fmt.Println()
 
-						if err := displayMoneroLegacyAddresses(g.legacySeed); err != nil {
+						if err := displayMoneroLegacyAddresses(g.legacySeed, xmrSeedOffset); err != nil {
 							return err
 						}
 					}
@@ -2071,12 +2091,12 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					out.Blank()
 
 					if deriveXmr {
-						xmrKeys, xmrErr := seedify.DeriveMoneroKeys(mnemonic, 9) //nolint:mnd
+						xmrKeys, xmrErr := seedify.DeriveMoneroKeysWithSeedOffset(mnemonic, 9, xmrSeedOffset) //nolint:mnd
 						if xmrErr != nil {
 							return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", slot.year, int(slot.month), xmrErr)
 						}
 
-						out.Sectionf("monero addresses from 16 word polyseed (%d-%02d)", slot.year, int(slot.month))
+						out.Sectionf("%s (%d-%02d)", moneroAddressSectionTitle("monero addresses from 16 word polyseed", xmrSeedOffset), slot.year, int(slot.month))
 						out.Blank()
 						out.Field(xmrKeys.PrimaryAddress, "primary address")
 						for j, subaddr := range xmrKeys.Subaddresses {
@@ -2091,7 +2111,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						out.Sensitive(legacySeed)
 						out.Blank()
 
-						if err := displayMoneroLegacyAddresses(legacySeed); err != nil {
+						if err := displayMoneroLegacyAddresses(legacySeed, xmrSeedOffset); err != nil {
 							return err
 						}
 					}
@@ -2264,7 +2284,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 	// Monero legacy uses a year-independent 25-word seed derived directly from the SSH key.
 	// When the 16-word polyseed section ran, legacy output is already shown there.
 	if deriveXmrLegacy && !wordCountsInclude(wordCounts, 16) { //nolint:mnd
-		if err := displayMoneroLegacyOutput(ed25519Key, seedPassphrase); err != nil {
+		if err := displayMoneroLegacyOutput(ed25519Key, seedPassphrase, xmrSeedOffset); err != nil {
 			return err
 		}
 	}
@@ -2594,7 +2614,7 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 
 // displayMoneroLegacyOutput derives and prints the 25-word Monero legacy (Electrum-style) seed and
 // the primary address plus subaddresses derived from it. Used for --xmr-legacy without polyseed output.
-func displayMoneroLegacyOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase string) error {
+func displayMoneroLegacyOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase string, xmrSeedOffset string) error {
 	legacySeed, legacyErr := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "monero")
 	if legacyErr != nil {
 		return fmt.Errorf("failed to derive Monero legacy seed: %w", legacyErr)
@@ -2602,17 +2622,17 @@ func displayMoneroLegacyOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase st
 
 	out.SeedSection("25 word monero legacy seed", legacySeed)
 
-	return displayMoneroLegacyAddresses(legacySeed)
+	return displayMoneroLegacyAddresses(legacySeed, xmrSeedOffset)
 }
 
 // displayMoneroLegacyAddresses prints Monero primary and subaddresses from a 25-word legacy seed.
-func displayMoneroLegacyAddresses(legacySeed string) error {
-	legacyKeys, legacyKErr := seedify.DeriveMoneroKeysFromLegacySeed(legacySeed, 9) //nolint:mnd
+func displayMoneroLegacyAddresses(legacySeed string, xmrSeedOffset string) error {
+	legacyKeys, legacyKErr := seedify.DeriveMoneroKeysFromLegacySeedWithSeedOffset(legacySeed, 9, xmrSeedOffset) //nolint:mnd
 	if legacyKErr != nil {
 		return fmt.Errorf("failed to derive Monero keys from legacy seed: %w", legacyKErr)
 	}
 
-	out.Section("monero addresses from 25 word legacy seed")
+	out.Section(moneroAddressSectionTitle("monero addresses from 25 word legacy seed", xmrSeedOffset))
 	out.Blank()
 	out.Field(legacyKeys.PrimaryAddress, "primary address")
 	for j, subaddr := range legacyKeys.Subaddresses {
@@ -2620,6 +2640,13 @@ func displayMoneroLegacyAddresses(legacySeed string) error {
 	}
 	out.Blank()
 	return nil
+}
+
+func moneroAddressSectionTitle(base string, xmrSeedOffset string) string {
+	if xmrSeedOffset == "" {
+		return base
+	}
+	return base + " with seed offset"
 }
 
 // displayKeyPreamble prints the SSH key pair, Tor onion address, and I2P destination before seed output.
