@@ -1482,9 +1482,6 @@ func openFileOrStdin(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !filepath.IsAbs(resolvedPath) {
-		return nil, fmt.Errorf("key path must be absolute; specify the full path to the key: %s", path)
-	}
 
 	// G304: resolvedPath is user-provided input, which is expected for a CLI tool
 	f, err := os.Open(resolvedPath) //nolint:gosec
@@ -1503,9 +1500,9 @@ func parsePrivateKey(bts, pass []byte) (interface{}, error) {
 	return ssh.ParseRawPrivateKeyWithPassphrase(bts, pass)
 }
 
-// runSSHKeyQR prints the encrypted OpenSSH private key exactly as stored (trimmed
-// of surrounding whitespace), followed by a terminal QR code containing the same
-// PEM text.
+// runSSHKeyQR prints the encrypted OpenSSH private key with its base64 body on a
+// single unwrapped line, followed by a terminal QR code containing the same PEM
+// text.
 func runSSHKeyQR(path string) error {
 	f, err := openFileOrStdin(path)
 	if err != nil {
@@ -1526,7 +1523,11 @@ func runSSHKeyQR(path string) error {
 		return err
 	}
 
-	keyPEM := strings.TrimSpace(string(bts))
+	keyPEM, err := oneLinePrivateKeyPEM(bts)
+	if err != nil {
+		return err
+	}
+
 	fmt.Println(keyPEM)
 	fmt.Println()
 	qrterminal.GenerateWithConfig(keyPEM, qrterminal.Config{
@@ -1536,6 +1537,16 @@ func runSSHKeyQR(path string) error {
 		QuietZone:  2, //nolint:mnd // Compact terminal QR while retaining a scan-friendly border.
 	})
 	return nil
+}
+
+func oneLinePrivateKeyPEM(keyBytes []byte) (string, error) {
+	block, _ := pem.Decode(keyBytes)
+	if block == nil || block.Type != "OPENSSH PRIVATE KEY" {
+		return "", errors.New("failed to decode OpenSSH private key PEM block")
+	}
+
+	keyB64 := base64.StdEncoding.EncodeToString(block.Bytes)
+	return "-----BEGIN OPENSSH PRIVATE KEY-----\n" + keyB64 + "\n-----END OPENSSH PRIVATE KEY-----", nil
 }
 
 // generateBraveSyncPhrase generates a 25-word seed phrase with Brave Sync.

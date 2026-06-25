@@ -326,8 +326,8 @@ The full API documentation is available on
 seedify <full-key-path> [flags]
 ```
 
-The key path must be absolute, or use `~` for your home directory. Bare key names
-are not searched in `~/.ssh`.
+The key path is used exactly as specified. Bare key names are not searched in
+`~/.ssh`.
 
 ```
 seedify ~/.ssh/id_ed25519
@@ -350,8 +350,9 @@ cat ~/.ssh/id_ed25519 | seedify --words 18
 Ed25519 seed, fingerprint) followed by the full curated set of seed phrases (12-word,
 16-word Polyseed, 24-word, Nostr keys, Monero legacy, Beldex, Brave Sync).
 
-**`--sshkey-qr`**: prints only the encrypted OpenSSH private key PEM, followed by a
-terminal QR code containing that same PEM text.
+**`--sshkey-qr`**: prints only the encrypted OpenSSH private key PEM with its base64
+body on one unwrapped line, followed by a terminal QR code containing that same PEM
+text.
 
 **`--full`**: same SSH/Tor/I2P preamble as the default, then all word counts and all
 chain derivations.
