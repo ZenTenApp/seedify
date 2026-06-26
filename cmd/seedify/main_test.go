@@ -479,9 +479,10 @@ func TestCLIOutput_ChainFlagsOmitPreamble(t *testing.T) {
 			mustAbsent:  []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS"},
 		},
 		{
-			name:        "--full shows preamble",
+			name:        "--full shows preamble but omits 12-word seed by default",
 			args:        []string{"--full"},
 			mustContain: []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS", "I2P DESTINATION"},
+			mustAbsent:  []string{"[12 word seed phrase]"},
 		},
 		{
 			name:        "--sshkey-qr emits only private key PEM plus QR",
