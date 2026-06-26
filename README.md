@@ -347,15 +347,16 @@ cat ~/.ssh/id_ed25519 | seedify --words 18
 ### Output modes
 
 **Bare default** (`seedify <key>`): prints SSH key material (public key, private key,
-Ed25519 seed, fingerprint) followed by the full curated set of seed phrases (12-word,
-16-word Polyseed, 24-word, Nostr keys, Monero legacy, Beldex, Brave Sync).
+Ed25519 seed, fingerprint) followed by the full curated set of seed phrases (16-word
+Polyseed, 24-word, Nostr keys, Monero legacy, Beldex, Brave Sync).
 
 **`--sshkey-qr`**: prints only the encrypted OpenSSH private key PEM with its base64
 body on one unwrapped line, followed by a terminal QR code containing that same PEM
 text.
 
-**`--full`**: same SSH/Tor/I2P preamble as the default, then all word counts and all
-chain derivations.
+**`--full`**: same SSH/Tor/I2P preamble as the default, then all default word counts
+(15, 16, 18, 21, 24) and all chain derivations. Use `--words 12` to print the
+12-word seed phrase.
 
 **Chain flags** (`--btc`, `--eth`, `--nostr`, `--xmr`, `--bdx`, `--xmr-legacy`, etc.)
 and **`--words`**: emit *only* the requested output — no SSH key material, no Tor/I2P

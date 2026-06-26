@@ -392,7 +392,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			var deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy, deriveBdx bool
 
 			if !hasAnyDerivationFlags {
-				wordCounts = []int{12, 15, 16, 18, 21, 24}
+				wordCounts = []int{15, 16, 18, 21, 24}
 				deriveNostr = true
 				showBrave = true
 				deriveBtc = true
@@ -1720,11 +1720,10 @@ func printPolyseedPhrases(ed25519Key *ed25519.PrivateKey, seedPassphrase string)
 
 // generatePhrasesOutput generates a curated set of seed phrases from the SSH key.
 // It prints the following phrases in order:
-//  1. 12-word BIP39 seed phrase
-//  2. 16-word Polyseed seed phrase
-//  3. 24-word BIP39 seed phrase
-//  4. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
-//  5. Brave 25-word seed phrase (24 brave-prefixed words + 25th word)
+//  1. 16-word Polyseed seed phrase
+//  2. 24-word BIP39 seed phrase
+//  3. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
+//  4. Brave 25-word seed phrase (24 brave-prefixed words + 25th word)
 //
 //nolint:funlen
 func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
@@ -1782,16 +1781,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 		return err
 	}
 
-	// 1. 12-word seed phrase
-	mnemonic12, err := seedify.ToMnemonicWithLength(ed25519Key, 12, seedPassphrase, false, 0) //nolint:mnd
-	if err != nil {
-		return fmt.Errorf("could not generate 12-word mnemonic: %w", err)
-	}
-	// 2 empty lines before the first output
-	out.SectionGap()
-	printPEMPhrase("12-WORD SEED PHRASE", mnemonic12)
-
-	// 2. 16-word seed phrases (Polyseed).
+	// 1. 16-word seed phrases (Polyseed).
 	// When --all-polyseeds is set, iterate every calendar day from the epoch
 	// and emit one PEM block per unique mnemonic, labelled with its date range.
 	// Otherwise emit one block per (year, month) slot as before.
@@ -1799,16 +1789,16 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 		return err
 	}
 
-	// 3. 24-word seed phrase (standard, no prefix)
+	// 2. 24-word seed phrase (standard, no prefix)
 	// 2 empty lines between outputs
 	out.SectionGap()
 	printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
 
-	// 4. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
+	// 3. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
 	out.SectionGap()
 	out.NostrKeyBlock(nostrKeys.Npub, nostrKeys.PubKeyHex, nostrKeys.Nsec, nostrKeys.PrivKeyHex)
 
-	// 5. Monero 25-word legacy seed (Electrum-style, "monero" prefix)
+	// 4. Monero 25-word legacy seed (Electrum-style, "monero" prefix)
 	moneroLegacySeed, err := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "monero")
 	if err != nil {
 		return fmt.Errorf("could not generate Monero legacy seed: %w", err)
@@ -1816,7 +1806,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	out.SectionGap()
 	printPEMPhrase("25-WORD MONERO LEGACY SEED", moneroLegacySeed)
 
-	// 6. Beldex 25-word seed ("beldex" prefix ensures divergence from Monero)
+	// 5. Beldex 25-word seed ("beldex" prefix ensures divergence from Monero)
 	bdxSeed, err := seedify.ToMoneroLegacySeedWithPrefix(ed25519Key, seedPassphrase, "beldex")
 	if err != nil {
 		return fmt.Errorf("could not generate Beldex seed: %w", err)
@@ -1824,7 +1814,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	out.SectionGap()
 	printPEMPhrase("25-WORD BELDEX (BDX) SEED", bdxSeed)
 
-	// 7. Brave 25-word seed phrase (24 brave-prefixed words + 25th word)
+	// 6. Brave 25-word seed phrase (24 brave-prefixed words + 25th word)
 	braveMnemonic, err := seedify.ToMnemonicWithBraveSync(ed25519Key, seedPassphrase)
 	if err != nil {
 		return fmt.Errorf("could not generate brave 25-word mnemonic: %w", err)
