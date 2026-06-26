@@ -2086,12 +2086,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					}
 
 					if deriveXmr || deriveXmrLegacy {
-						fmt.Println("[25 word monero legacy seed]")
-						fmt.Println()
-						fmt.Println(g.legacySeed)
-						fmt.Println()
-
-						if err := displayMoneroLegacyAddresses(g.legacySeed, xmrSeedOffset); err != nil {
+						if err := displayMoneroLegacyOutput(ed25519Key, seedPassphrase, xmrSeedOffset); err != nil {
 							return err
 						}
 					}
@@ -2130,12 +2125,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					}
 
 					if deriveXmr || deriveXmrLegacy {
-						out.Section("25 word monero legacy seed")
-						out.Blank()
-						out.Sensitive(legacySeed)
-						out.Blank()
-
-						if err := displayMoneroLegacyAddresses(legacySeed, xmrSeedOffset); err != nil {
+						if err := displayMoneroLegacyOutput(ed25519Key, seedPassphrase, xmrSeedOffset); err != nil {
 							return err
 						}
 					}

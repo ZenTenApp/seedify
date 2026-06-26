@@ -455,9 +455,9 @@ func TestCLIOutput_ChainFlagsOmitPreamble(t *testing.T) {
 			mustAbsent:  []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS", "I2P DESTINATION", "[16 word seed phrase"},
 		},
 		{
-			name:        "--xmr includes polyseed and legacy 25-word seed in polyseed section",
+			name:        "--xmr includes polyseed and direct legacy 25-word seed",
 			args:        []string{"--xmr"},
-			mustContain: []string{"[16 word seed phrase", "[monero addresses from 16 word polyseed", "[25 word monero legacy seed]", "[monero addresses from 25 word legacy seed]"},
+			mustContain: []string{"[16 word seed phrase", "[25 word monero legacy seed]", "[monero addresses from 25 word legacy seed]", "[monero addresses from 16 word polyseed"},
 			mustAbsent:  []string{"BEGIN OPENSSH PUBLIC KEY", "TOR ONION ADDRESS", "[monero addresses from 25 word legacy seed ("},
 		},
 		{
