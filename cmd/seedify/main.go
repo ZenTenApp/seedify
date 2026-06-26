@@ -47,6 +47,12 @@ import (
 const (
 	maxWidth = 72
 
+	// Polyseed birthday encoding constants from github.com/complex-gh/polyseed_go.
+	// The library keeps these unexported, but seedify needs them to show the
+	// beginning of the encoded birthday period in CLI labels.
+	polyseedBirthdayEpochUnix = uint64(1635768000)
+	polyseedBirthdayTimeStep  = uint64(2629746)
+
 	kindNIP78         = 30078
 	zentenProfileITag = "blockchains"
 
@@ -647,6 +653,24 @@ func birthdayFromYearMonth(year int, month time.Month) uint64 {
 func birthdayFromDate(date time.Time) uint64 {
 	year, month, day := date.UTC().Date()
 	return unixBirthday(time.Date(year, month, day, 0, 0, 0, 0, time.UTC))
+}
+
+func polyseedPeriodBeginning(birthday uint64) time.Time {
+	if birthday < polyseedBirthdayEpochUnix {
+		birthday = polyseedBirthdayEpochUnix
+	}
+	period := (birthday - polyseedBirthdayEpochUnix) / polyseedBirthdayTimeStep
+	startUnix := polyseedBirthdayEpochUnix + period*polyseedBirthdayTimeStep
+	return time.Unix(int64(startUnix), 0).UTC() //nolint:gosec
+}
+
+func polyseedSlotLabel(slot yearMonth) string {
+	periodStart := polyseedPeriodBeginning(birthdayFromYearMonth(slot.year, slot.month))
+	return fmt.Sprintf("%d-%02d, period beginning %s", slot.year, int(slot.month), periodStart.Format("2006-01"))
+}
+
+func polyseedPEMLabel(slot yearMonth) string {
+	return fmt.Sprintf("16-WORD POLYSEED (%s)", polyseedSlotLabel(slot))
 }
 
 func unixBirthday(date time.Time) uint64 {
@@ -1682,7 +1706,7 @@ func printMonthlyPolyseedPhrases(ed25519Key *ed25519.PrivateKey, seedPassphrase 
 			return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
 		}
 		fmt.Print("\n\n")
-		printPEMPhrase(fmt.Sprintf("16-WORD POLYSEED (1.%d.%d)", int(slot.month), slot.year), mnemonic16)
+		printPEMPhrase(polyseedPEMLabel(slot), mnemonic16)
 	}
 	return nil
 }
@@ -2079,7 +2103,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						return fmt.Errorf("could not generate 16-word mnemonic for %d-%02d: %w", slot.year, int(slot.month), mnErr)
 					}
 
-					out.Sectionf("16 word seed phrase (%d-%02d)", slot.year, int(slot.month))
+					out.Sectionf("16 word seed phrase (%s)", polyseedSlotLabel(slot))
 					out.Blank()
 					out.Sensitive(mnemonic)
 
@@ -2096,7 +2120,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 							return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", slot.year, int(slot.month), xmrErr)
 						}
 
-						out.Sectionf("%s (%d-%02d)", moneroAddressSectionTitle("monero addresses from 16 word polyseed", xmrSeedOffset), slot.year, int(slot.month))
+						out.Sectionf("%s (%s)", moneroAddressSectionTitle("monero addresses from 16 word polyseed", xmrSeedOffset), polyseedSlotLabel(slot))
 						out.Blank()
 						out.Field(xmrKeys.PrimaryAddress, "primary address")
 						for j, subaddr := range xmrKeys.Subaddresses {

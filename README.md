@@ -389,7 +389,22 @@ seed phrase generation entirely.
 | `--publish` | Publish ZentenProfile NIP-78 Kind 30078 events to relays (with `--zentenprofile`): one event per selected label |
 | `--blockchains` | Comma-separated labels to publish with `--zentenprofile --publish`; default is all labels |
 | `--polyseed-year` | Override Polyseed birthday year (default: current year) |
+| `--polyseed-month` | Override Polyseed birthday month, 1–12 (default: January) |
 | `-l, --language` | Mnemonic language (default: en) |
+
+### Polyseed birthday periods
+
+For 16-word Polyseed output, `--polyseed-year` and `--polyseed-month` choose a
+birthday on the first day of that month at 00:00 UTC. Polyseed stores birthdays
+in fixed ~30.44-day periods, not exact calendar months. Seedify therefore shows
+both the selected birthday month and the encoded period beginning in labels, for
+example:
+
+```text
+[16 word seed phrase (2026-01, period beginning 2025-12)]
+```
+
+`--all-polyseeds` already prints exact date ranges for each unique Polyseed.
 
 ### Color config
 
