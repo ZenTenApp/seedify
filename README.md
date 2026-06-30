@@ -350,9 +350,9 @@ cat ~/.ssh/id_ed25519 | seedify --words 18
 Ed25519 seed, fingerprint) followed by the full curated set of seed phrases (16-word
 Polyseed, 24-word, Nostr keys, Monero legacy, Beldex, Brave Sync).
 
-**`--sshkey-qr`**: prints only the encrypted OpenSSH private key PEM with its base64
-body on one unwrapped line, followed by a terminal QR code containing that same PEM
-text.
+**`--sshkey-qr`**: prints only the encrypted OpenSSH private key as one raw
+unwrapped base64 line, followed by a terminal QR code containing that same raw
+one-line key text.
 
 **`--full`**: same SSH/Tor/I2P preamble as the default, then the default word counts
 (16, 24) and all chain derivations. Use `--words 12,15,18,21` to print those
@@ -384,7 +384,7 @@ seed phrase generation entirely.
 | `--xmr` | Derive Monero address from Polyseed |
 | `--xmr-legacy` | Derive Monero address from a 25-word legacy seed |
 | `--xmr-seed-offset` | Feather-compatible Monero seed offset passphrase for Monero address derivation |
-| `--sshkey-qr` | Print only the encrypted OpenSSH private key PEM, followed by a terminal QR code containing that PEM text |
+| `--sshkey-qr` | Print only the encrypted OpenSSH private key as one raw base64 line, followed by a terminal QR code containing that same raw line |
 | `--zentenprofile` | Output public keys and addresses as DNS JSON |
 | `--to-dnssec` | Derive a DNSSEC RSASHA256 keypair; use with `--dnssec-domain`, `--dnssec-ksk`/`--dnssec-zsk`, and optional `--output <dir>` |
 | `--publish` | Publish ZentenProfile NIP-78 Kind 30078 events to relays (with `--zentenprofile`): one event per selected label |

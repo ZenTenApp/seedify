@@ -1524,9 +1524,9 @@ func parsePrivateKey(bts, pass []byte) (interface{}, error) {
 	return ssh.ParseRawPrivateKeyWithPassphrase(bts, pass)
 }
 
-// runSSHKeyQR prints the encrypted OpenSSH private key with its base64 body on a
-// single unwrapped line, followed by a terminal QR code containing the same PEM
-// text.
+// runSSHKeyQR prints the encrypted OpenSSH private key bytes as a single
+// unwrapped base64 line, followed by a terminal QR code containing the same raw
+// one-line key text.
 func runSSHKeyQR(path string) error {
 	f, err := openFileOrStdin(path)
 	if err != nil {
@@ -1547,14 +1547,14 @@ func runSSHKeyQR(path string) error {
 		return err
 	}
 
-	keyPEM, err := oneLinePrivateKeyPEM(bts)
+	keyLine, err := oneLinePrivateKeyRaw(bts)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println(keyPEM)
+	fmt.Println(keyLine)
 	fmt.Println()
-	qrterminal.GenerateWithConfig(keyPEM, qrterminal.Config{
+	qrterminal.GenerateWithConfig(keyLine, qrterminal.Config{
 		Level:      qrterminal.L,
 		Writer:     os.Stdout,
 		HalfBlocks: true,
@@ -1563,14 +1563,13 @@ func runSSHKeyQR(path string) error {
 	return nil
 }
 
-func oneLinePrivateKeyPEM(keyBytes []byte) (string, error) {
+func oneLinePrivateKeyRaw(keyBytes []byte) (string, error) {
 	block, _ := pem.Decode(keyBytes)
 	if block == nil || block.Type != "OPENSSH PRIVATE KEY" {
 		return "", errors.New("failed to decode OpenSSH private key PEM block")
 	}
 
-	keyB64 := base64.StdEncoding.EncodeToString(block.Bytes)
-	return "-----BEGIN OPENSSH PRIVATE KEY-----\n" + keyB64 + "\n-----END OPENSSH PRIVATE KEY-----", nil
+	return base64.StdEncoding.EncodeToString(block.Bytes), nil
 }
 
 // generateBraveSyncPhrase generates a 25-word seed phrase with Brave Sync.
