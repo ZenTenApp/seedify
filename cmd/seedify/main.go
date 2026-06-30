@@ -392,7 +392,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			var deriveBtc, deriveEth, deriveZec, deriveSol, deriveTron, deriveXmr, deriveXmrLegacy, deriveBdx bool
 
 			if !hasAnyDerivationFlags {
-				wordCounts = []int{15, 16, 18, 21, 24}
+				wordCounts = []int{16, 24}
 				deriveNostr = true
 				showBrave = true
 				deriveBtc = true
@@ -564,7 +564,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&seedPassphrase, "seed-passphrase", "", "Passphrase to combine with SSH key seed for additional entropy")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "~/.seedify.ini", "INI config file for color overrides")
 	rootCmd.PersistentFlags().BoolVar(&brave, "brave", false, "Generate 25-word phrase with Brave Sync")
-	rootCmd.PersistentFlags().BoolVar(&full, "full", false, "Print full output (all word counts, Nostr keys, crypto derivations)")
+	rootCmd.PersistentFlags().BoolVar(&full, "full", false, "Print full output (default word counts, Nostr keys, crypto derivations)")
 	rootCmd.PersistentFlags().BoolVar(&nostr, "nostr", false, "Derive Nostr keys (npub/nsec) from seed phrase.")
 	rootCmd.PersistentFlags().BoolVar(&bitcoin, "btc", false, "Derive Bitcoin address from 24-word seed phrase")
 	rootCmd.PersistentFlags().BoolVar(&ethereum, "eth", false, "Derive Ethereum address from 24-word seed phrase")

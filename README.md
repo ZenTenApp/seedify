@@ -354,9 +354,9 @@ Polyseed, 24-word, Nostr keys, Monero legacy, Beldex, Brave Sync).
 body on one unwrapped line, followed by a terminal QR code containing that same PEM
 text.
 
-**`--full`**: same SSH/Tor/I2P preamble as the default, then all default word counts
-(15, 16, 18, 21, 24) and all chain derivations. Use `--words 12` to print the
-12-word seed phrase.
+**`--full`**: same SSH/Tor/I2P preamble as the default, then the default word counts
+(16, 24) and all chain derivations. Use `--words 12,15,18,21` to print those
+BIP39 seed phrase lengths.
 
 **Chain flags** (`--btc`, `--eth`, `--nostr`, `--xmr`, `--bdx`, `--xmr-legacy`, etc.)
 and **`--words`**: emit *only* the requested output — no SSH key material, no Tor/I2P
@@ -374,7 +374,7 @@ seed phrase generation entirely.
 | `--seed-passphrase` | Combine with SSH key seed for additional entropy |
 | `--config` | INI config file for color overrides (default: `~/.seedify.ini`) |
 | `--brave` | Generate 25-word Brave Sync phrase |
-| `--full` | Print all word counts and all chain derivations (with full preamble) |
+| `--full` | Print default word counts and all chain derivations (with full preamble) |
 | `--nostr` | Derive Nostr keys (npub/nsec) |
 | `--btc` | Derive Bitcoin addresses |
 | `--eth` | Derive Ethereum address |
