@@ -52,6 +52,25 @@ func TestCLIOut_PlainTextPreservesContent(t *testing.T) {
 	}
 }
 
+func TestCLIOut_PEMBlockDelimited(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
+	o := newCLIOut()
+	got := captureStdout(func() {
+		o.PEMBlockDelimited("24-WORD SEED PHRASE (charmbracelet/MELT)", "abandon abandon abandon", "=====", true)
+	})
+
+	for _, want := range []string{
+		"=====BEGIN 24-WORD SEED PHRASE (charmbracelet/MELT)=====",
+		"abandon abandon abandon",
+		"=====END 24-WORD SEED PHRASE (charmbracelet/MELT)=====",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q\nfull output:\n%s", want, got)
+		}
+	}
+}
+
 func TestCLIOut_TreeAndSubFields(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 

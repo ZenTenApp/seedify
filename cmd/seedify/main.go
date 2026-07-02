@@ -1626,6 +1626,10 @@ func printPEMPhrase(label string, phrase string) {
 	out.PEMBlock(label, phrase, true)
 }
 
+func printMELTPhrase(phrase string) {
+	out.PEMBlockDelimited("24-WORD SEED PHRASE (charmbracelet/MELT)", phrase, "=====", true)
+}
+
 // printSSHKeyPair prints the SSH public key (RFC 4716 OpenSSH PEM) with the
 // key type prepended inside the block (ssh-ed25519 <base64> <npub>), the
 // private key (OpenSSH PEM) with its SHA-256 hash, the raw 32-byte ed25519
@@ -1791,7 +1795,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	// 2. 24-word seed phrase (standard, no prefix)
 	// 2 empty lines between outputs
 	out.SectionGap()
-	printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
+	printMELTPhrase(mnemonic24)
 
 	// 3. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
 	out.SectionGap()
