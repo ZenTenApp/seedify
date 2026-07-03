@@ -85,30 +85,30 @@ var (
 			Background(lipgloss.AdaptiveColor{Light: completeColor("#FFEBEB", "255", "7"), Dark: completeColor("#2B1A1A", "235", "8")}).
 			Padding(1, 2) //nolint:mnd
 
-	language       string
-	wordCountStr   string
+	language        string
+	wordCountStr    string
 	seedPassphrase  string
 	bip39Passphrase string
 	configPath      string
-	brave          bool
-	full           bool
-	nostr          bool
-	bitcoin        bool
-	ethereum       bool
-	zcash          bool
-	solana         bool
-	tron           bool
-	monero         bool
-	moneroLegacy   bool
-	xmrSeedOffset  string
-	beldex         bool
-	sshKeyQR       bool
-	zentenprofile  bool
-	publishRelays  string
-	blockchains    string
-	polyseedYear   string
-	polyseedMonth  string
-	polyseedAll    bool
+	brave           bool
+	full            bool
+	nostr           bool
+	bitcoin         bool
+	ethereum        bool
+	zcash           bool
+	solana          bool
+	tron            bool
+	monero          bool
+	moneroLegacy    bool
+	xmrSeedOffset   string
+	beldex          bool
+	sshKeyQR        bool
+	zentenprofile   bool
+	publishRelays   string
+	blockchains     string
+	polyseedYear    string
+	polyseedMonth   string
+	polyseedAll     bool
 
 	// derive-key flags.
 	deriveKeyToRSA           bool
