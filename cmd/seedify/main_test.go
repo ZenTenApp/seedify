@@ -512,3 +512,55 @@ func TestCLIOutput_ChainFlagsOmitPreamble(t *testing.T) {
 		})
 	}
 }
+
+func ethereumAddressFromCLIOutput(out string) (string, error) {
+	const marker = "[ethereum address from 24 word seed]"
+	idx := strings.Index(out, marker)
+	if idx < 0 {
+		return "", errors.New("ethereum section not found")
+	}
+	for _, line := range strings.Split(out[idx+len(marker):], "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "0x") {
+			return line, nil
+		}
+	}
+	return "", errors.New("ethereum address not found")
+}
+
+// TestCLIOutput_BIP39PassphraseChangesEthereumAddress verifies that --bip39-passphrase
+// is wired through to BIP39 seed derivation for chain addresses.
+func TestCLIOutput_BIP39PassphraseChangesEthereumAddress(t *testing.T) {
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "seedify")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	buildCmd.Dir = "."
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, out)
+	}
+
+	const pass = "testpass"
+	keyPath := testKeyWithPassphrase(t, pass)
+
+	defaultOut, err := runSeedifyWithPassphrase(t, binPath, pass, keyPath, "--eth")
+	if err != nil {
+		t.Fatalf("seedify --eth: %v\noutput:\n%s", err, defaultOut)
+	}
+	defaultAddr, err := ethereumAddressFromCLIOutput(defaultOut)
+	if err != nil {
+		t.Fatalf("parse default ethereum address: %v\noutput:\n%s", err, defaultOut)
+	}
+
+	withPassOut, err := runSeedifyWithPassphrase(t, binPath, pass, keyPath, "--eth", "--bip39-passphrase", "wallet-pass")
+	if err != nil {
+		t.Fatalf("seedify --eth --bip39-passphrase: %v\noutput:\n%s", err, withPassOut)
+	}
+	withPassAddr, err := ethereumAddressFromCLIOutput(withPassOut)
+	if err != nil {
+		t.Fatalf("parse passphrase ethereum address: %v\noutput:\n%s", err, withPassOut)
+	}
+
+	if defaultAddr == withPassAddr {
+		t.Fatalf("expected different ethereum addresses with and without --bip39-passphrase; both were %s", defaultAddr)
+	}
+}

@@ -358,8 +358,13 @@ func (o *cliOut) AddressSection(title, addr string) {
 
 // PEMBlock prints BEGIN/content/END markers. Set sensitive for secret content.
 func (o *cliOut) PEMBlock(label, content string, sensitive bool) {
-	begin := "-----BEGIN " + label + "-----"
-	end := "-----END " + label + "-----"
+	o.PEMBlockDelimited(label, content, "-----", sensitive)
+}
+
+// PEMBlockDelimited prints BEGIN/content/END markers with a custom delimiter.
+func (o *cliOut) PEMBlockDelimited(label, content, delimiter string, sensitive bool) {
+	begin := delimiter + "BEGIN " + label + delimiter
+	end := delimiter + "END " + label + delimiter
 	if !o.color {
 		fmt.Printf("%s\n%s\n%s\n", begin, content, end)
 		return

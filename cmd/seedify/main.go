@@ -85,29 +85,30 @@ var (
 			Background(lipgloss.AdaptiveColor{Light: completeColor("#FFEBEB", "255", "7"), Dark: completeColor("#2B1A1A", "235", "8")}).
 			Padding(1, 2) //nolint:mnd
 
-	language       string
-	wordCountStr   string
-	seedPassphrase string
-	configPath     string
-	brave          bool
-	full           bool
-	nostr          bool
-	bitcoin        bool
-	ethereum       bool
-	zcash          bool
-	solana         bool
-	tron           bool
-	monero         bool
-	moneroLegacy   bool
-	xmrSeedOffset  string
-	beldex         bool
-	sshKeyQR       bool
-	zentenprofile  bool
-	publishRelays  string
-	blockchains    string
-	polyseedYear   string
-	polyseedMonth  string
-	polyseedAll    bool
+	language        string
+	wordCountStr    string
+	seedPassphrase  string
+	bip39Passphrase string
+	configPath      string
+	brave           bool
+	full            bool
+	nostr           bool
+	bitcoin         bool
+	ethereum        bool
+	zcash           bool
+	solana          bool
+	tron            bool
+	monero          bool
+	moneroLegacy    bool
+	xmrSeedOffset   string
+	beldex          bool
+	sshKeyQR        bool
+	zentenprofile   bool
+	publishRelays   string
+	blockchains     string
+	polyseedYear    string
+	polyseedMonth   string
+	polyseedAll     bool
 
 	// derive-key flags.
 	deriveKeyToRSA           bool
@@ -156,6 +157,8 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --words 12,24 --nostr
   seedify ~/.ssh/id_ed25519 --nostr
   seedify ~/.ssh/id_ed25519 --words 12 --seed-passphrase "my-passphrase"
+  seedify ~/.ssh/id_ed25519 --btc --bip39-passphrase "my-wallet-passphrase"
+  seedify ~/.ssh/id_ed25519 --eth --bip39-passphrase "my-wallet-passphrase"
   seedify ~/.ssh/id_ed25519 --brave
   seedify ~/.ssh/id_ed25519 --full
   seedify ~/.ssh/id_ed25519 --polyseed-year 2024
@@ -562,6 +565,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&language, "language", "l", "en", "Language")
 	rootCmd.PersistentFlags().StringVarP(&wordCountStr, "words", "w", "", "Word counts to generate (comma-separated: 12,15,18,21,24)")
 	rootCmd.PersistentFlags().StringVar(&seedPassphrase, "seed-passphrase", "", "Passphrase to combine with SSH key seed for additional entropy")
+	rootCmd.PersistentFlags().StringVar(&bip39Passphrase, "bip39-passphrase", "", "Optional BIP39 extension passphrase (25th word) when deriving wallet addresses from mnemonics; not the same as --seed-passphrase")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "~/.seedify.ini", "INI config file for color overrides")
 	rootCmd.PersistentFlags().BoolVar(&brave, "brave", false, "Generate 25-word phrase with Brave Sync")
 	rootCmd.PersistentFlags().BoolVar(&full, "full", false, "Print full output (default word counts, Nostr keys, crypto derivations)")
@@ -1626,6 +1630,10 @@ func printPEMPhrase(label string, phrase string) {
 	out.PEMBlock(label, phrase, true)
 }
 
+func printMELTPhrase(phrase string) {
+	out.PEMBlockDelimited("24-WORD SEED PHRASE (charmbracelet/MELT)", phrase, "=====", true)
+}
+
 // printSSHKeyPair prints the SSH public key (RFC 4716 OpenSSH PEM) with the
 // key type prepended inside the block (ssh-ed25519 <base64> <npub>), the
 // private key (OpenSSH PEM) with its SHA-256 hash, the raw 32-byte ed25519
@@ -1770,7 +1778,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 		return fmt.Errorf("could not generate 24-word mnemonic: %w", err)
 	}
 
-	nostrKeys, err := seedify.DeriveNostrKeysWithHex(mnemonic24, "")
+	nostrKeys, err := seedify.DeriveNostrKeysWithHex(mnemonic24, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("could not derive Nostr keys from 24-word mnemonic: %w", err)
 	}
@@ -1791,7 +1799,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	// 2. 24-word seed phrase (standard, no prefix)
 	// 2 empty lines between outputs
 	out.SectionGap()
-	printPEMPhrase("24-WORD SEED PHRASE (charmbracelet/MELT)", mnemonic24)
+	printMELTPhrase(mnemonic24)
 
 	// 3. Nostr keys derived from the 24-word mnemonic (NIP-06 path)
 	out.SectionGap()
@@ -2133,7 +2141,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 
 			// Derive and display nostr keys for 12-word and 24-word seed phrases only
 			if deriveNostr && (count == 12 || count == 24) {
-				nostrKeys, nErr := seedify.DeriveNostrKeysWithHex(mnemonic, "")
+				nostrKeys, nErr := seedify.DeriveNostrKeysWithHex(mnemonic, bip39Passphrase)
 				if nErr != nil {
 					return fmt.Errorf("failed to derive Nostr keys from %d-word mnemonic: %w", count, nErr)
 				}
@@ -2163,7 +2171,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 
 				// Ethereum address
 				if deriveEth {
-					ethAddr, ethErr := seedify.DeriveEthereumAddress(mnemonic, "")
+					ethAddr, ethErr := seedify.DeriveEthereumAddress(mnemonic, bip39Passphrase)
 					if ethErr != nil {
 						return fmt.Errorf("failed to derive Ethereum address from 24-word seed: %w", ethErr)
 					}
@@ -2173,7 +2181,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 
 				// Zcash address (below Ethereum, shown when any crypto derivation is requested)
 				if hasAnyCryptoFlag {
-					zcashAddr, zErr := seedify.DeriveZcashAddress(mnemonic, "")
+					zcashAddr, zErr := seedify.DeriveZcashAddress(mnemonic, bip39Passphrase)
 					if zErr != nil {
 						return fmt.Errorf("failed to derive Zcash address from 24-word seed: %w", zErr)
 					}
@@ -2183,7 +2191,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 
 				// Solana address
 				if deriveSol {
-					solAddr, solErr := seedify.DeriveSolanaAddress(mnemonic, "")
+					solAddr, solErr := seedify.DeriveSolanaAddress(mnemonic, bip39Passphrase)
 					if solErr != nil {
 						return fmt.Errorf("failed to derive Solana address from 24-word seed: %w", solErr)
 					}
@@ -2193,7 +2201,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 
 				// Tron address
 				if deriveTron {
-					tronAddr, tErr := seedify.DeriveTronAddress(mnemonic, "")
+					tronAddr, tErr := seedify.DeriveTronAddress(mnemonic, bip39Passphrase)
 					if tErr != nil {
 						return fmt.Errorf("failed to derive Tron address from 24-word seed: %w", tErr)
 					}
@@ -2203,7 +2211,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 
 				// EVM-compatible chain addresses (reuse Ethereum address)
 				if deriveEth {
-					evmAddr, evmErr := seedify.DeriveEthereumAddress(mnemonic, "")
+					evmAddr, evmErr := seedify.DeriveEthereumAddress(mnemonic, bip39Passphrase)
 					if evmErr != nil {
 						return fmt.Errorf("failed to derive EVM address from 24-word seed: %w", evmErr)
 					}
@@ -2220,7 +2228,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 				// Extra chains: only show when user requested at least one crypto derivation
 				if hasAnyCryptoFlag {
 					// Litecoin address (native SegWit)
-					ltcAddr, ltcErr := seedify.DeriveLitecoinAddress(mnemonic, "")
+					ltcAddr, ltcErr := seedify.DeriveLitecoinAddress(mnemonic, bip39Passphrase)
 					if ltcErr != nil {
 						return fmt.Errorf("failed to derive Litecoin address from 24-word seed: %w", ltcErr)
 					}
@@ -2228,7 +2236,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					out.AddressSection("litecoin address from 24 word seed", ltcAddr)
 
 					// Dogecoin address
-					dogeAddr, dogeErr := seedify.DeriveDogecoinAddress(mnemonic, "")
+					dogeAddr, dogeErr := seedify.DeriveDogecoinAddress(mnemonic, bip39Passphrase)
 					if dogeErr != nil {
 						return fmt.Errorf("failed to derive Dogecoin address from 24-word seed: %w", dogeErr)
 					}
@@ -2236,7 +2244,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					out.AddressSection("dogecoin address from 24 word seed", dogeAddr)
 
 					// Cosmos address
-					cosmosAddr, cosmosErr := seedify.DeriveCosmosAddress(mnemonic, "")
+					cosmosAddr, cosmosErr := seedify.DeriveCosmosAddress(mnemonic, bip39Passphrase)
 					if cosmosErr != nil {
 						return fmt.Errorf("failed to derive Cosmos address from 24-word seed: %w", cosmosErr)
 					}
@@ -2244,7 +2252,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					out.AddressSection("cosmos address from 24 word seed", cosmosAddr)
 
 					// Noble address
-					nobleAddr, nobleErr := seedify.DeriveNobleAddress(mnemonic, "")
+					nobleAddr, nobleErr := seedify.DeriveNobleAddress(mnemonic, bip39Passphrase)
 					if nobleErr != nil {
 						return fmt.Errorf("failed to derive Noble address from 24-word seed: %w", nobleErr)
 					}
@@ -2252,7 +2260,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					out.AddressSection("noble address from 24 word seed", nobleAddr)
 
 					// Sui address
-					suiAddr, suiErr := seedify.DeriveSuiAddress(mnemonic, "")
+					suiAddr, suiErr := seedify.DeriveSuiAddress(mnemonic, bip39Passphrase)
 					if suiErr != nil {
 						return fmt.Errorf("failed to derive Sui address from 24-word seed: %w", suiErr)
 					}
@@ -2260,7 +2268,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					out.AddressSection("sui address from 24 word seed", suiAddr)
 
 					// Stellar address
-					xlmAddr, xlmErr := seedify.DeriveStellarAddress(mnemonic, "")
+					xlmAddr, xlmErr := seedify.DeriveStellarAddress(mnemonic, bip39Passphrase)
 					if xlmErr != nil {
 						return fmt.Errorf("failed to derive Stellar address from 24-word seed: %w", xlmErr)
 					}
@@ -2268,7 +2276,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					out.AddressSection("stellar address from 24 word seed", xlmAddr)
 
 					// Ripple address
-					xrpAddr, xrpErr := seedify.DeriveRippleAddress(mnemonic, "")
+					xrpAddr, xrpErr := seedify.DeriveRippleAddress(mnemonic, bip39Passphrase)
 					if xrpErr != nil {
 						return fmt.Errorf("failed to derive Ripple address from 24-word seed: %w", xrpErr)
 					}
@@ -2445,7 +2453,7 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 	// The master key is the root of the HD wallet tree (path: m)
 	// This is the same key regardless of which BIP standard you're using
 
-	masterExtended, err := seedify.DeriveBitcoinMasterExtendedKeys(mnemonic, "")
+	masterExtended, err := seedify.DeriveBitcoinMasterExtendedKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin master extended keys: %w", err)
 	}
@@ -2459,19 +2467,19 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 	// === SINGLE-SIG ADDRESSES AND PRIVATE KEYS ===
 
 	// Legacy P2PKH (BIP44)
-	legacyKeys, err := seedify.DeriveBitcoinLegacyKeys(mnemonic, "")
+	legacyKeys, err := seedify.DeriveBitcoinLegacyKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin legacy keys: %w", err)
 	}
 
 	// SegWit P2SH-P2WPKH (BIP49)
-	segwitKeys, err := seedify.DeriveBitcoinSegwitKeys(mnemonic, "")
+	segwitKeys, err := seedify.DeriveBitcoinSegwitKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin SegWit keys: %w", err)
 	}
 
 	// Native SegWit P2WPKH (BIP84)
-	nativeKeys, err := seedify.DeriveBitcoinNativeSegwitKeys(mnemonic, "")
+	nativeKeys, err := seedify.DeriveBitcoinNativeSegwitKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin native SegWit keys: %w", err)
 	}
@@ -2497,19 +2505,19 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 	// Import these into wallets to derive all addresses for that account
 
 	// Legacy extended keys (xpub/xprv)
-	legacyExtended, err := seedify.DeriveBitcoinLegacyExtendedKeys(mnemonic, "")
+	legacyExtended, err := seedify.DeriveBitcoinLegacyExtendedKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin legacy extended keys: %w", err)
 	}
 
 	// SegWit extended keys (ypub/yprv)
-	segwitExtended, err := seedify.DeriveBitcoinSegwitExtendedKeys(mnemonic, "")
+	segwitExtended, err := seedify.DeriveBitcoinSegwitExtendedKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin SegWit extended keys: %w", err)
 	}
 
 	// Native SegWit extended keys (zpub/zprv)
-	nativeExtended, err := seedify.DeriveBitcoinNativeSegwitExtendedKeys(mnemonic, "")
+	nativeExtended, err := seedify.DeriveBitcoinNativeSegwitExtendedKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin native SegWit extended keys: %w", err)
 	}
@@ -2531,25 +2539,25 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 	// === MULTISIG 1-OF-1 ADDRESSES AND PRIVATE KEYS ===
 
 	// Legacy multisig P2SH (BIP48)
-	multisigLegacyKeys, err := seedify.DeriveBitcoinMultisigLegacyKeys(mnemonic, "")
+	multisigLegacyKeys, err := seedify.DeriveBitcoinMultisigLegacyKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin multisig legacy keys: %w", err)
 	}
 
 	// SegWit multisig P2SH-P2WSH (BIP48)
-	multisigSegwitKeys, err := seedify.DeriveBitcoinMultisigSegwitKeys(mnemonic, "")
+	multisigSegwitKeys, err := seedify.DeriveBitcoinMultisigSegwitKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin multisig SegWit keys: %w", err)
 	}
 
 	// Native SegWit multisig P2WSH (BIP48)
-	multisigNativeKeys, err := seedify.DeriveBitcoinMultisigNativeSegwitKeys(mnemonic, "")
+	multisigNativeKeys, err := seedify.DeriveBitcoinMultisigNativeSegwitKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin multisig native SegWit keys: %w", err)
 	}
 
 	// === PAYNYM (BIP47) ===
-	payNymKeys, err := seedify.DerivePayNym(mnemonic, "")
+	payNymKeys, err := seedify.DerivePayNym(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive PayNym: %w", err)
 	}
@@ -2577,19 +2585,19 @@ func displayBitcoinOutput(mnemonic string, wordCount int) error {
 	// === MULTISIG ACCOUNT-LEVEL EXTENDED KEYS ===
 
 	// Legacy multisig extended keys (xpub/xprv)
-	multisigLegacyExtended, err := seedify.DeriveBitcoinMultisigLegacyExtendedKeys(mnemonic, "")
+	multisigLegacyExtended, err := seedify.DeriveBitcoinMultisigLegacyExtendedKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin multisig legacy extended keys: %w", err)
 	}
 
 	// SegWit multisig extended keys (Ypub/Yprv)
-	multisigSegwitExtended, err := seedify.DeriveBitcoinMultisigSegwitExtendedKeys(mnemonic, "")
+	multisigSegwitExtended, err := seedify.DeriveBitcoinMultisigSegwitExtendedKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin multisig SegWit extended keys: %w", err)
 	}
 
 	// Native SegWit multisig extended keys (Zpub/Zprv)
-	multisigNativeExtended, err := seedify.DeriveBitcoinMultisigNativeSegwitExtendedKeys(mnemonic, "")
+	multisigNativeExtended, err := seedify.DeriveBitcoinMultisigNativeSegwitExtendedKeys(mnemonic, bip39Passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive Bitcoin multisig native SegWit extended keys: %w", err)
 	}
@@ -2658,7 +2666,7 @@ func displayKeyPreamble(ed25519Key *ed25519.PrivateKey, bts []byte, seedPassphra
 	if m24Err != nil {
 		return fmt.Errorf("could not generate 24-word mnemonic for key comment: %w", m24Err)
 	}
-	nostrKeys, nkErr := seedify.DeriveNostrKeysWithHex(mnemonic24, "")
+	nostrKeys, nkErr := seedify.DeriveNostrKeysWithHex(mnemonic24, bip39Passphrase)
 	if nkErr != nil {
 		return fmt.Errorf("could not derive Nostr keys for key comment: %w", nkErr)
 	}
@@ -2923,7 +2931,7 @@ func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seed
 		return nil, nil, fmt.Errorf("could not generate 24-word mnemonic: %w", err)
 	}
 
-	nostrKeys, err := seedify.DeriveNostrKeysWithHex(mnemonic, "")
+	nostrKeys, err := seedify.DeriveNostrKeysWithHex(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Nostr keys: %w", err)
 	}
@@ -2934,22 +2942,22 @@ func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seed
 		return nil, nil, err
 	}
 
-	sp1Addr, err := seedify.DeriveSilentPaymentAddress(mnemonic, "")
+	sp1Addr, err := seedify.DeriveSilentPaymentAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Silent Payment (sp1) address: %w", err)
 	}
 
-	payNymKeys, err := seedify.DerivePayNym(mnemonic, "")
+	payNymKeys, err := seedify.DerivePayNym(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive PayNym: %w", err)
 	}
 
-	ltcAddr, err := seedify.DeriveLitecoinAddress(mnemonic, "")
+	ltcAddr, err := seedify.DeriveLitecoinAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Litecoin address: %w", err)
 	}
 
-	dogeAddr, err := seedify.DeriveDogecoinAddress(mnemonic, "")
+	dogeAddr, err := seedify.DeriveDogecoinAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Dogecoin address: %w", err)
 	}
@@ -2963,47 +2971,47 @@ func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seed
 		return nil, nil, err
 	}
 
-	cosmosAddr, err := seedify.DeriveCosmosAddress(mnemonic, "")
+	cosmosAddr, err := seedify.DeriveCosmosAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Cosmos address: %w", err)
 	}
 
-	nobleAddr, err := seedify.DeriveNobleAddress(mnemonic, "")
+	nobleAddr, err := seedify.DeriveNobleAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Noble address: %w", err)
 	}
 
-	ethAddr, err := seedify.DeriveEthereumAddress(mnemonic, "")
+	ethAddr, err := seedify.DeriveEthereumAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Ethereum address: %w", err)
 	}
 
-	zcashAddr, err := seedify.DeriveZcashAddress(mnemonic, "")
+	zcashAddr, err := seedify.DeriveZcashAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Zcash address: %w", err)
 	}
 
-	solAddr, err := seedify.DeriveSolanaAddress(mnemonic, "")
+	solAddr, err := seedify.DeriveSolanaAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Solana address: %w", err)
 	}
 
-	suiAddr, err := seedify.DeriveSuiAddress(mnemonic, "")
+	suiAddr, err := seedify.DeriveSuiAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Sui address: %w", err)
 	}
 
-	tronAddr, err := seedify.DeriveTronAddress(mnemonic, "")
+	tronAddr, err := seedify.DeriveTronAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Tron address: %w", err)
 	}
 
-	xlmAddr, err := seedify.DeriveStellarAddress(mnemonic, "")
+	xlmAddr, err := seedify.DeriveStellarAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Stellar address: %w", err)
 	}
 
-	xrpAddr, err := seedify.DeriveRippleAddress(mnemonic, "")
+	xrpAddr, err := seedify.DeriveRippleAddress(mnemonic, bip39Passphrase)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive Ripple address: %w", err)
 	}
@@ -3049,7 +3057,7 @@ func zentenProfileBitcoinAddress(mnemonic string) (string, uint32, error) {
 	if indexErr != nil {
 		return "", 0, indexErr
 	}
-	addr, err := seedify.DeriveBitcoinAddressNativeSegwitAtIndex(mnemonic, "", index)
+	addr, err := seedify.DeriveBitcoinAddressNativeSegwitAtIndex(mnemonic, bip39Passphrase, index)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to derive Bitcoin native SegWit address at index %d: %w", index, err)
 	}
