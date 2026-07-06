@@ -1639,7 +1639,7 @@ func printMELTPhrase(phrase string) {
 // private key (OpenSSH PEM) with its SHA-256 hash, the raw 32-byte ed25519
 // seed in hex with its SHA-256 hash, and the SHA-256 fingerprint of the public
 // key. npub is appended as the authorized_keys-style comment on the public key
-// line. privateKeyPEM must be the raw PEM bytes as read from disk.
+// line. privateKeyPEM must be OpenSSH PEM bytes for the key being printed.
 func printSSHKeyPair(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte, npub string) error {
 	sshPubKey, err := ssh.NewPublicKey(ed25519Key.Public())
 	if err != nil {
@@ -1783,8 +1783,13 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 		return fmt.Errorf("could not derive Nostr keys from 24-word mnemonic: %w", err)
 	}
 
+	displayKey, privateKeyPEM, err := secretBunkerDisplaySSHKeyPEM(ed25519Key, bts, seedPassphrase)
+	if err != nil {
+		return err
+	}
+
 	out.SectionGap()
-	if err := printSSHKeyPair(ed25519Key, bts, nostrKeys.Npub); err != nil {
+	if err := printSSHKeyPair(displayKey, privateKeyPEM, nostrKeys.Npub); err != nil {
 		return err
 	}
 
@@ -2671,18 +2676,23 @@ func displayKeyPreamble(ed25519Key *ed25519.PrivateKey, bts []byte, seedPassphra
 		return fmt.Errorf("could not derive Nostr keys for key comment: %w", nkErr)
 	}
 
-	out.SectionGap()
-	if err := printSSHKeyPair(ed25519Key, bts, nostrKeys.Npub); err != nil {
+	displayKey, privateKeyPEM, err := secretBunkerDisplaySSHKeyPEM(ed25519Key, bts, seedPassphrase)
+	if err != nil {
 		return err
 	}
 
-	onionKeys, onionErr := seedify.DeriveOnionServiceKeys(ed25519Key)
+	out.SectionGap()
+	if err := printSSHKeyPair(displayKey, privateKeyPEM, nostrKeys.Npub); err != nil {
+		return err
+	}
+
+	onionKeys, onionErr := seedify.DeriveOnionServiceKeys(displayKey)
 	if onionErr != nil {
 		return fmt.Errorf("could not derive Tor v3 hidden service keys: %w", onionErr)
 	}
 	out.PEMBlockPrefixed(1, "TOR ONION ADDRESS", onionKeys.OnionAddress, false)
 
-	i2pKeys, i2pErr := seedify.DeriveI2PDestinationKeys(ed25519Key)
+	i2pKeys, i2pErr := seedify.DeriveI2PDestinationKeys(displayKey)
 	if i2pErr != nil {
 		return fmt.Errorf("could not derive I2P destination keys: %w", i2pErr)
 	}
@@ -2694,6 +2704,30 @@ func displayKeyPreamble(ed25519Key *ed25519.PrivateKey, bts []byte, seedPassphra
 	})
 	out.Blank()
 	return nil
+}
+
+func secretBunkerDisplaySSHKeyPEM(sourceKey *ed25519.PrivateKey, sourcePrivateKeyPEM []byte, secretBunker string) (*ed25519.PrivateKey, []byte, error) {
+	if secretBunker == "" {
+		return sourceKey, sourcePrivateKeyPEM, nil
+	}
+
+	ephemeralKey := deriveSecretBunkerSSHKey(sourceKey, secretBunker)
+	pemBlock, marshalErr := ssh.MarshalPrivateKeyWithPassphrase(ephemeralKey, "", []byte(secretBunker))
+	if marshalErr != nil {
+		return nil, nil, fmt.Errorf("could not encode secret-bunker SSH key: %w", marshalErr)
+	}
+	privateKeyPEM := pem.EncodeToMemory(pemBlock)
+	if privateKeyPEM == nil {
+		return nil, nil, errors.New("could not encode secret-bunker SSH key PEM")
+	}
+	return &ephemeralKey, privateKeyPEM, nil
+}
+
+func deriveSecretBunkerSSHKey(sourceKey *ed25519.PrivateKey, secretBunker string) ed25519.PrivateKey {
+	bunkerHash := sha256.Sum256([]byte(secretBunker))
+	seedMaterial := append(bunkerHash[:], sourceKey.Seed()...)
+	derivedSeed := sha256.Sum256(seedMaterial)
+	return ed25519.NewKeyFromSeed(derivedSeed[:])
 }
 
 // displayBeldexOutput derives and prints the 25-word Beldex seed (same Electrum encoding as Monero
