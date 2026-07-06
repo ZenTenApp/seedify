@@ -156,7 +156,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --words 12 --nostr
   seedify ~/.ssh/id_ed25519 --words 12,24 --nostr
   seedify ~/.ssh/id_ed25519 --nostr
-  seedify ~/.ssh/id_ed25519 --words 12 --seed-passphrase "my-passphrase"
+  seedify ~/.ssh/id_ed25519 --words 12 --secret-bunker "my-passphrase"
   seedify ~/.ssh/id_ed25519 --btc --bip39-passphrase "my-wallet-passphrase"
   seedify ~/.ssh/id_ed25519 --eth --bip39-passphrase "my-wallet-passphrase"
   seedify ~/.ssh/id_ed25519 --brave
@@ -564,8 +564,8 @@ PowerShell:
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&language, "language", "l", "en", "Language")
 	rootCmd.PersistentFlags().StringVarP(&wordCountStr, "words", "w", "", "Word counts to generate (comma-separated: 12,15,18,21,24)")
-	rootCmd.PersistentFlags().StringVar(&seedPassphrase, "seed-passphrase", "", "Passphrase to combine with SSH key seed for additional entropy")
-	rootCmd.PersistentFlags().StringVar(&bip39Passphrase, "bip39-passphrase", "", "Optional BIP39 extension passphrase (25th word) when deriving wallet addresses from mnemonics; not the same as --seed-passphrase")
+	rootCmd.PersistentFlags().StringVar(&seedPassphrase, "secret-bunker", "", "Passphrase to combine with SSH key seed for additional entropy")
+	rootCmd.PersistentFlags().StringVar(&bip39Passphrase, "bip39-passphrase", "", "Optional BIP39 extension passphrase (25th word) when deriving wallet addresses from mnemonics; not the same as --secret-bunker")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "~/.seedify.ini", "INI config file for color overrides")
 	rootCmd.PersistentFlags().BoolVar(&brave, "brave", false, "Generate 25-word phrase with Brave Sync")
 	rootCmd.PersistentFlags().BoolVar(&full, "full", false, "Print full output (default word counts, Nostr keys, crypto derivations)")
