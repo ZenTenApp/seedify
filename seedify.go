@@ -24,7 +24,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -1754,27 +1753,13 @@ func DeriveMoneroSubaddressAtIndexWithSeedOffset(mnemonic string, index uint32, 
 	return deriveMoneroSubaddress(viewSecKey, spendPubKey, 0, index+1)
 }
 
-// MoneroSubaddress contains a Monero subaddress and its account/address indexes.
-type MoneroSubaddress struct {
-	// Major is the account index.
-	Major uint32
-	// Minor is the address index within the account.
-	Minor uint32
-	// Address is the encoded Monero subaddress (starts with "8" on mainnet).
-	Address string
-}
-
 // MoneroKeys contains the primary address and subaddresses derived from a polyseed.
 type MoneroKeys struct {
 	// PrimaryAddress is the main Monero address (starts with "4")
 	PrimaryAddress string
-	// Subaddresses is a list of subaddresses (start with "8") preserved for
-	// backwards compatibility. Index 0 is subaddress (0,1), index 1 is (0,2),
-	// etc. when using DeriveMoneroKeys/DeriveMoneroKeysWithSeedOffset.
+	// Subaddresses is a list of subaddresses (start with "8")
+	// Index 0 is subaddress (0,1), index 1 is (0,2), etc.
 	Subaddresses []string
-	// IndexedSubaddresses contains the same subaddresses with their major/minor
-	// indexes. Use this field when deriving more than account 0.
-	IndexedSubaddresses []MoneroSubaddress
 }
 
 // DeriveMoneroKeys derives a Monero primary address and subaddresses from a polyseed mnemonic.
@@ -1795,27 +1780,11 @@ func DeriveMoneroKeys(mnemonic string, numSubaddresses int) (*MoneroKeys, error)
 // DeriveMoneroKeysWithSeedOffset derives a Monero primary address and subaddresses
 // from a polyseed mnemonic using an optional Feather-compatible seed offset passphrase.
 func DeriveMoneroKeysWithSeedOffset(mnemonic string, numSubaddresses int, seedOffset string) (*MoneroKeys, error) {
-	if numSubaddresses < 0 {
-		return nil, errors.New("monero subaddresses cannot be negative")
-	}
-	return DeriveMoneroKeysForAccountsWithSeedOffset(mnemonic, 1, numSubaddresses+1, seedOffset)
-}
-
-// DeriveMoneroKeysForAccounts derives a Monero primary address and subaddresses
-// for the requested number of accounts and receiving addresses per account.
-func DeriveMoneroKeysForAccounts(mnemonic string, accounts int, addresses int) (*MoneroKeys, error) {
-	return DeriveMoneroKeysForAccountsWithSeedOffset(mnemonic, accounts, addresses, "")
-}
-
-// DeriveMoneroKeysForAccountsWithSeedOffset derives a Monero primary address
-// and subaddresses for the requested number of accounts and receiving addresses
-// per account using an optional Feather-compatible seed offset passphrase.
-func DeriveMoneroKeysForAccountsWithSeedOffset(mnemonic string, accounts int, addresses int, seedOffset string) (*MoneroKeys, error) {
 	keyPair, err := moneroKeyPairFromPolyseed(mnemonic, seedOffset)
 	if err != nil {
 		return nil, err
 	}
-	return moneroKeysFromKeyPairForAccounts(keyPair, accounts, addresses)
+	return moneroKeysFromKeyPair(keyPair, numSubaddresses)
 }
 
 // ToMoneroLegacySeedFromPolyseed derives the Monero legacy 25-word (Electrum-style)
@@ -1951,27 +1920,11 @@ func DeriveMoneroKeysFromLegacySeed(mnemonic string, numSubaddresses int) (*Mone
 // DeriveMoneroKeysFromLegacySeedWithSeedOffset derives Monero addresses from a
 // 25-word Monero legacy mnemonic using an optional Feather-compatible seed offset passphrase.
 func DeriveMoneroKeysFromLegacySeedWithSeedOffset(mnemonic string, numSubaddresses int, seedOffset string) (*MoneroKeys, error) {
-	if numSubaddresses < 0 {
-		return nil, errors.New("monero subaddresses cannot be negative")
-	}
-	return DeriveMoneroKeysFromLegacySeedForAccountsWithSeedOffset(mnemonic, 1, numSubaddresses+1, seedOffset)
-}
-
-// DeriveMoneroKeysFromLegacySeedForAccounts derives Monero addresses from a
-// 25-word Monero legacy mnemonic for the requested account/address range.
-func DeriveMoneroKeysFromLegacySeedForAccounts(mnemonic string, accounts int, addresses int) (*MoneroKeys, error) {
-	return DeriveMoneroKeysFromLegacySeedForAccountsWithSeedOffset(mnemonic, accounts, addresses, "")
-}
-
-// DeriveMoneroKeysFromLegacySeedForAccountsWithSeedOffset derives Monero
-// addresses from a 25-word Monero legacy mnemonic for the requested
-// account/address range using an optional Feather-compatible seed offset passphrase.
-func DeriveMoneroKeysFromLegacySeedForAccountsWithSeedOffset(mnemonic string, accounts int, addresses int, seedOffset string) (*MoneroKeys, error) {
 	keyPair, err := moneroKeyPairFromLegacySeed(mnemonic, seedOffset)
 	if err != nil {
 		return nil, err
 	}
-	return moneroKeysFromKeyPairForAccounts(keyPair, accounts, addresses)
+	return moneroKeysFromKeyPair(keyPair, numSubaddresses)
 }
 
 func moneroKeyPairFromPolyseed(mnemonic string, seedOffset string) (*utils.FullKeyPair, error) {
@@ -2012,14 +1965,7 @@ func moneroKeyPairFromSpendKey(spendKey []byte, seedOffset string) (*utils.FullK
 	return keyPair, nil
 }
 
-func moneroKeysFromKeyPairForAccounts(keyPair *utils.FullKeyPair, accounts int, addresses int) (*MoneroKeys, error) {
-	if accounts < 1 {
-		return nil, errors.New("monero accounts must be at least 1")
-	}
-	if addresses < 0 {
-		return nil, errors.New("monero addresses cannot be negative")
-	}
-
+func moneroKeysFromKeyPair(keyPair *utils.FullKeyPair, numSubaddresses int) (*MoneroKeys, error) {
 	viewSecKey := keyPair.ViewKeyPair().PrivateKey().Bytes()
 	spendPubKey := keyPair.SpendKeyPair().PublicKey().Bytes()
 	viewPubKey := keyPair.ViewKeyPair().PublicKey().Bytes()
@@ -2029,31 +1975,18 @@ func moneroKeysFromKeyPairForAccounts(keyPair *utils.FullKeyPair, accounts int, 
 		return nil, fmt.Errorf("failed to build primary address: %w", err)
 	}
 
-	subaddresses := make([]string, 0, accounts*addresses)
-	indexedSubaddresses := make([]MoneroSubaddress, 0, accounts*addresses)
-	for major := uint32(0); major < uint32(accounts); major++ { //nolint:gosec
-		for minor := uint32(0); minor < uint32(addresses); minor++ { //nolint:gosec
-			if major == 0 && minor == 0 {
-				// (0,0) is the primary address, printed separately.
-				continue
-			}
-			subaddr, err := deriveMoneroSubaddress(viewSecKey, spendPubKey, major, minor)
-			if err != nil {
-				return nil, fmt.Errorf("failed to derive subaddress (%d,%d): %w", major, minor, err)
-			}
-			subaddresses = append(subaddresses, subaddr)
-			indexedSubaddresses = append(indexedSubaddresses, MoneroSubaddress{
-				Major:   major,
-				Minor:   minor,
-				Address: subaddr,
-			})
+	subaddresses := make([]string, 0, numSubaddresses)
+	for i := uint32(1); i <= uint32(numSubaddresses); i++ { //nolint:gosec
+		subaddr, err := deriveMoneroSubaddress(viewSecKey, spendPubKey, 0, i)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive subaddress (0,%d): %w", i, err)
 		}
+		subaddresses = append(subaddresses, subaddr)
 	}
 
 	return &MoneroKeys{
-		PrimaryAddress:      primaryAddr,
-		Subaddresses:        subaddresses,
-		IndexedSubaddresses: indexedSubaddresses,
+		PrimaryAddress: primaryAddr,
+		Subaddresses:   subaddresses,
 	}, nil
 }
 
