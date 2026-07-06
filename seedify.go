@@ -2012,13 +2012,6 @@ func moneroKeyPairFromSpendKey(spendKey []byte, seedOffset string) (*utils.FullK
 	return keyPair, nil
 }
 
-func moneroKeysFromKeyPair(keyPair *utils.FullKeyPair, numSubaddresses int) (*MoneroKeys, error) {
-	if numSubaddresses < 0 {
-		return nil, errors.New("monero subaddresses cannot be negative")
-	}
-	return moneroKeysFromKeyPairForAccounts(keyPair, 1, numSubaddresses+1)
-}
-
 func moneroKeysFromKeyPairForAccounts(keyPair *utils.FullKeyPair, accounts int, addresses int) (*MoneroKeys, error) {
 	if accounts < 1 {
 		return nil, errors.New("monero accounts must be at least 1")

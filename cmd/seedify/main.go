@@ -57,6 +57,7 @@ const (
 	zentenProfileITag = "blockchains"
 
 	zentenProfileMoneroDailySubaddressMax = 9
+	defaultXMRAddressCount                = 9
 	zentenProfileBitcoinDailyAddressMax   = 99
 
 	nostrPublishDelay                   = 3 * time.Second
@@ -597,7 +598,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&moneroLegacy, "xmr-legacy", false, "Derive Monero address from 25-word legacy seed (shown alongside --xmr polyseed output)")
 	rootCmd.PersistentFlags().StringVar(&xmrSeedOffset, "xmr-seed-offset", "", "Feather-compatible Monero seed offset passphrase for --xmr/--xmr-legacy address derivation")
 	rootCmd.PersistentFlags().IntVar(&xmrAccounts, "xmr-accounts", 1, "Number of Monero accounts (major indexes) to derive")
-	rootCmd.PersistentFlags().IntVar(&xmrAddresses, "xmr-addresses", 9, "Number of Monero addresses (minor indexes) per account to derive")
+	rootCmd.PersistentFlags().IntVar(&xmrAddresses, "xmr-addresses", defaultXMRAddressCount, "Number of Monero addresses (minor indexes) per account to derive")
 	rootCmd.PersistentFlags().BoolVar(&beldex, "bdx", false, "Derive Beldex (BDX) address from 25-word legacy seed (same seed format as --xmr-legacy)")
 	rootCmd.PersistentFlags().BoolVar(&sshKeyQR, "sshkey-qr", false, "Print the encrypted OpenSSH private key and display it as a terminal QR code")
 	rootCmd.PersistentFlags().BoolVar(&zentenprofile, "zentenprofile", false, "Output public keys and addresses as DNS JSON to stdout")

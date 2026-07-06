@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 
-	"golang.org/x/crypto/blowfish"
+	"golang.org/x/crypto/blowfish" //nolint:staticcheck // OpenSSH bcrypt_pbkdf requires Blowfish internally.
 	"golang.org/x/crypto/ssh"
 )
 
@@ -19,6 +19,12 @@ const (
 	openSSHPrivateKeyAuthMagic        = "openssh-key-v1\x00"
 	defaultOpenSSHBcryptKDFRounds     = 16
 	bcryptPBKDFBlockSize              = 32
+	openSSHPrivateKeyCipherKeySize    = 32
+	bcryptPBKDFMaxKeyLen              = 1024
+	bcryptPBKDFCounterSize            = 4
+	bcryptPBKDFCounterByte0Shift      = 24
+	bcryptPBKDFCounterByte1Shift      = 16
+	bitsPerByte                       = 8
 	openSSHPrivateKeyBcryptSaltLength = 16
 )
 
@@ -60,7 +66,7 @@ func marshalOpenSSHEd25519PrivateKeyWithPassphraseKDFRounds(key ed25519.PrivateK
 
 	var check uint32
 	if err := binary.Read(rand.Reader, binary.BigEndian, &check); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read OpenSSH check bytes: %w", err)
 	}
 
 	pub := make([]byte, ed25519.PublicKeySize)
@@ -91,7 +97,7 @@ func marshalOpenSSHEd25519PrivateKeyWithPassphraseKDFRounds(key ed25519.PrivateK
 
 	protected, kdfOptions, err := encryptOpenSSHPrivateKeyBlockWithBcryptRounds(ssh.Marshal(pk), passphrase, rounds)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to encrypt OpenSSH private key block: %w", err)
 	}
 
 	wrapped := openSSHEncryptedPrivateKeyWithKDF{
@@ -112,7 +118,7 @@ func marshalOpenSSHEd25519PrivateKeyWithPassphraseKDFRounds(key ed25519.PrivateK
 func encryptOpenSSHPrivateKeyBlockWithBcryptRounds(privKeyBlock, passphrase []byte, rounds int) ([]byte, []byte, error) {
 	salt := make([]byte, openSSHPrivateKeyBcryptSaltLength)
 	if _, err := rand.Read(salt); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to read OpenSSH bcrypt salt: %w", err)
 	}
 
 	opts := struct {
@@ -123,17 +129,17 @@ func encryptOpenSSHPrivateKeyBlockWithBcryptRounds(privKeyBlock, passphrase []by
 		Rounds: uint32(rounds), //nolint:gosec // rounds is validated positive; practical values fit uint32.
 	}
 
-	k, err := bcryptPBKDFKey(passphrase, salt, int(opts.Rounds), 32+aes.BlockSize)
+	k, err := bcryptPBKDFKey(passphrase, salt, int(opts.Rounds), openSSHPrivateKeyCipherKeySize+aes.BlockSize)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	keyBlock := generateOpenSSHPaddingForKDF(privKeyBlock, aes.BlockSize)
 	dst := make([]byte, len(keyBlock))
-	key, iv := k[:32], k[32:]
+	key, iv := k[:openSSHPrivateKeyCipherKeySize], k[openSSHPrivateKeyCipherKeySize:]
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to create OpenSSH private-key cipher: %w", err)
 	}
 	stream := cipher.NewCTR(block, iv)
 	stream.XORKeyStream(dst, keyBlock)
@@ -161,7 +167,7 @@ func bcryptPBKDFKey(password, salt []byte, rounds, keyLen int) ([]byte, error) {
 	if len(salt) == 0 || len(salt) > 1<<20 {
 		return nil, errors.New("bcrypt_pbkdf: bad salt length")
 	}
-	if keyLen > 1024 {
+	if keyLen > bcryptPBKDFMaxKeyLen {
 		return nil, errors.New("bcrypt_pbkdf: keyLen is too large")
 	}
 
@@ -173,13 +179,13 @@ func bcryptPBKDFKey(password, salt []byte, rounds, keyLen int) ([]byte, error) {
 	shapass := h.Sum(nil)
 
 	shasalt := make([]byte, 0, sha512.Size)
-	cnt, tmp := make([]byte, 4), make([]byte, bcryptPBKDFBlockSize)
+	cnt, tmp := make([]byte, bcryptPBKDFCounterSize), make([]byte, bcryptPBKDFBlockSize)
 	for block := 1; block <= numBlocks; block++ {
 		h.Reset()
 		h.Write(salt) //nolint:errcheck // hash.Hash Write never returns an error.
-		cnt[0] = byte(block >> 24)
-		cnt[1] = byte(block >> 16)
-		cnt[2] = byte(block >> 8)
+		cnt[0] = byte(block >> bcryptPBKDFCounterByte0Shift)
+		cnt[1] = byte(block >> bcryptPBKDFCounterByte1Shift)
+		cnt[2] = byte(block >> bitsPerByte)
 		cnt[3] = byte(block)
 		h.Write(cnt) //nolint:errcheck // hash.Hash Write never returns an error.
 		bcryptPBKDFHash(tmp, shapass, h.Sum(shasalt))
@@ -204,6 +210,7 @@ func bcryptPBKDFKey(password, salt []byte, rounds, keyLen int) ([]byte, error) {
 
 var bcryptPBKDFMagic = []byte("OxychromaticBlowfishSwatDynamite")
 
+//nolint:staticcheck // OpenSSH bcrypt_pbkdf is specified in terms of Blowfish.
 func bcryptPBKDFHash(out, shapass, shasalt []byte) {
 	c, err := blowfish.NewSaltedCipher(shapass, shasalt)
 	if err != nil {
