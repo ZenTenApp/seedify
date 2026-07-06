@@ -102,6 +102,8 @@ var (
 	monero                bool
 	moneroLegacy          bool
 	xmrSeedOffset         string
+	xmrAccounts           int
+	xmrAddresses          int
 	beldex                bool
 	sshKeyQR              bool
 	zentenprofile         bool
@@ -278,6 +280,13 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			}
 			if secretBunkerKDFRounds != defaultOpenSSHBcryptKDFRounds && seedPassphrase == "" {
 				return errors.New("--secret-bunker-kdf-rounds requires --secret-bunker")
+			}
+
+			if xmrAccounts < 1 {
+				return errors.New("--xmr-accounts must be at least 1")
+			}
+			if xmrAddresses < 0 {
+				return errors.New("--xmr-addresses cannot be negative")
 			}
 
 			// --xmr-seed-offset only applies to Monero address derivation.
@@ -587,6 +596,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&monero, "xmr", false, "Derive Monero address from 16-word polyseed")
 	rootCmd.PersistentFlags().BoolVar(&moneroLegacy, "xmr-legacy", false, "Derive Monero address from 25-word legacy seed (shown alongside --xmr polyseed output)")
 	rootCmd.PersistentFlags().StringVar(&xmrSeedOffset, "xmr-seed-offset", "", "Feather-compatible Monero seed offset passphrase for --xmr/--xmr-legacy address derivation")
+	rootCmd.PersistentFlags().IntVar(&xmrAccounts, "xmr-accounts", 1, "Number of Monero accounts (major indexes) to derive")
+	rootCmd.PersistentFlags().IntVar(&xmrAddresses, "xmr-addresses", 9, "Number of Monero addresses (minor indexes) per account to derive")
 	rootCmd.PersistentFlags().BoolVar(&beldex, "bdx", false, "Derive Beldex (BDX) address from 25-word legacy seed (same seed format as --xmr-legacy)")
 	rootCmd.PersistentFlags().BoolVar(&sshKeyQR, "sshkey-qr", false, "Print the encrypted OpenSSH private key and display it as a terminal QR code")
 	rootCmd.PersistentFlags().BoolVar(&zentenprofile, "zentenprofile", false, "Output public keys and addresses as DNS JSON to stdout")
@@ -2079,7 +2090,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					fmt.Println()
 
 					if deriveXmr {
-						xmrKeys, xmrErr := seedify.DeriveMoneroKeysWithSeedOffset(g.mnemonic, 9, xmrSeedOffset) //nolint:mnd
+						xmrKeys, xmrErr := seedify.DeriveMoneroKeysForAccountsWithSeedOffset(g.mnemonic, xmrAccounts, xmrAddresses, xmrSeedOffset)
 						if xmrErr != nil {
 							return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%s → %s): %w",
 								g.startDate.Format("2006-01-02"), g.endDate.Format("2006-01-02"), xmrErr)
@@ -2090,8 +2101,8 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 							g.startDate.Format("2006-01-02"), g.endDate.Format("2006-01-02"))
 						fmt.Println()
 						fmt.Printf("%s (primary address)\n", xmrKeys.PrimaryAddress)
-						for j, subaddr := range xmrKeys.Subaddresses {
-							fmt.Printf("> %s (subaddress 0,%d)\n", subaddr, j+1)
+						for _, subaddr := range xmrKeys.IndexedSubaddresses {
+							fmt.Printf("> %s (subaddress %d,%d)\n", subaddr.Address, subaddr.Major, subaddr.Minor)
 						}
 						fmt.Println()
 					}
@@ -2121,7 +2132,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 					out.Blank()
 
 					if deriveXmr {
-						xmrKeys, xmrErr := seedify.DeriveMoneroKeysWithSeedOffset(mnemonic, 9, xmrSeedOffset) //nolint:mnd
+						xmrKeys, xmrErr := seedify.DeriveMoneroKeysForAccountsWithSeedOffset(mnemonic, xmrAccounts, xmrAddresses, xmrSeedOffset)
 						if xmrErr != nil {
 							return fmt.Errorf("failed to derive Monero keys from 16-word polyseed (%d-%02d): %w", slot.year, int(slot.month), xmrErr)
 						}
@@ -2129,8 +2140,8 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 						out.Sectionf("%s (%s)", moneroAddressSectionTitle("monero addresses from 16 word polyseed", xmrSeedOffset), polyseedSlotLabel(slot))
 						out.Blank()
 						out.Field(xmrKeys.PrimaryAddress, "primary address")
-						for j, subaddr := range xmrKeys.Subaddresses {
-							out.SubField(subaddr, fmt.Sprintf("subaddress 0,%d", j+1))
+						for _, subaddr := range xmrKeys.IndexedSubaddresses {
+							out.SubField(subaddr.Address, fmt.Sprintf("subaddress %d,%d", subaddr.Major, subaddr.Minor))
 						}
 						out.Blank()
 					}
@@ -2652,7 +2663,7 @@ func displayMoneroLegacyOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase st
 
 // displayMoneroLegacyAddresses prints Monero primary and subaddresses from a 25-word legacy seed.
 func displayMoneroLegacyAddresses(legacySeed string, xmrSeedOffset string) error {
-	legacyKeys, legacyKErr := seedify.DeriveMoneroKeysFromLegacySeedWithSeedOffset(legacySeed, 9, xmrSeedOffset) //nolint:mnd
+	legacyKeys, legacyKErr := seedify.DeriveMoneroKeysFromLegacySeedForAccountsWithSeedOffset(legacySeed, xmrAccounts, xmrAddresses, xmrSeedOffset)
 	if legacyKErr != nil {
 		return fmt.Errorf("failed to derive Monero keys from legacy seed: %w", legacyKErr)
 	}
@@ -2660,8 +2671,8 @@ func displayMoneroLegacyAddresses(legacySeed string, xmrSeedOffset string) error
 	out.Section(moneroAddressSectionTitle("monero addresses from 25 word legacy seed", xmrSeedOffset))
 	out.Blank()
 	out.Field(legacyKeys.PrimaryAddress, "primary address")
-	for j, subaddr := range legacyKeys.Subaddresses {
-		out.SubField(subaddr, fmt.Sprintf("subaddress 0,%d", j+1))
+	for _, subaddr := range legacyKeys.IndexedSubaddresses {
+		out.SubField(subaddr.Address, fmt.Sprintf("subaddress %d,%d", subaddr.Major, subaddr.Minor))
 	}
 	out.Blank()
 	return nil
