@@ -218,7 +218,7 @@ fmt.Println(keys.PrimaryAddress) // 4...
 fmt.Println(keys.Subaddresses)   // [8..., 8..., 8..., 8..., 8...]
 
 // Feather-compatible Monero seed offset passphrase.
-// This is NOT seedify's --secret-bunker; it is applied only during
+// This is NOT seedify's --brain-bunker; it is applied only during
 // Monero address derivation/restoration.
 offsetKeys, _ := seedify.DeriveMoneroKeysWithSeedOffset(polyseed, 5, "my-offset")
 fmt.Println(offsetKeys.PrimaryAddress) // 4... different wallet
@@ -371,7 +371,7 @@ seed phrase generation entirely.
 | Flag | Description |
 |------|-------------|
 | `-w, --words` | Word counts to generate, comma-separated (12,15,16,18,21,24) |
-| `--secret-bunker` | Combine with SSH key seed for additional entropy |
+| `--brain-bunker` | Derive an ephemeral SSH key from this secret and use that key for all seed/address output |
 | `--config` | INI config file for color overrides (default: `~/.seedify.ini`) |
 | `--brave` | Generate 25-word Brave Sync phrase |
 | `--full` | Print default word counts and all chain derivations (with full preamble) |
@@ -448,14 +448,15 @@ Most shells (bash, zsh) ignore commands that start with a space when
   password-protected. Unprotected keys are rejected.
 - **One-way derivation**: Seed phrases cannot be used to recover the original
   SSH key. The derivation is intentionally irreversible.
-- **Deterministic output**: The same key + passphrase always produces the same
-  mnemonic. This means the mnemonic is only as secure as the SSH key and
-  passphrase.
-- **Seed passphrase**: Use `--secret-bunker` (CLI) or the `seedPassphrase`
-  parameter (library) to add entropy beyond the SSH key alone. Different
-  passphrases produce completely different mnemonics.
+- **Deterministic output**: The same active key always produces the same
+  mnemonic. This means the mnemonic is only as secure as the SSH key material
+  used to derive it.
+- **Brain bunker**: Use `--brain-bunker` to derive an ephemeral Ed25519 SSH key
+  from the original SSH key plus the bunker secret. Seedify then uses that
+  ephemeral key for all seed/address output as though it were the input key.
+  Different bunker secrets produce completely different active keys and outputs.
 - **Monero seed offset**: `--xmr-seed-offset` is different from
-  `--secret-bunker`. It does not change the generated Polyseed or legacy seed;
+  `--brain-bunker`. It does not change the generated Polyseed or legacy seed;
   it applies Monero's Feather-compatible seed offset passphrase when deriving
   Monero addresses. To restore that wallet in Feather, enter the shown Monero
   seed plus the exact same seed offset passphrase.
