@@ -1,0 +1,40 @@
+#!/usr/bin/expect -f
+#
+# Non-interactive wrapper around seedify's passphrase prompt.
+#
+# seedify reads the SSH key passphrase from a TTY prompt (see
+# cmd/seedify/main.go: askKeyPassphrase), so it cannot be scripted directly
+# from a shell pipe. This mirrors the pattern used in the project's own
+# integration tests (cmd/seedify/main_test.go: runSeedifyWithPassphrase),
+# feeding the passphrase from the SEEDIFY_KEY_PASSPHRASE environment variable
+# whenever seedify prompts for it.
+#
+# Usage: run-seedify.exp <seedify-binary> [args...]
+
+set timeout 60
+
+if {![info exists ::env(SEEDIFY_KEY_PASSPHRASE)]} {
+    send_error "SEEDIFY_KEY_PASSPHRASE is not set\n"
+    exit 1
+}
+set passphrase $::env(SEEDIFY_KEY_PASSPHRASE)
+
+set cmd [lrange $argv 0 end]
+
+# Suppress expect's own "spawn <command>" announcement so the captured
+# transcript contains only seedify's own output; re-enable immediately so the
+# child's real stdout/stderr are still echoed through to our stdout.
+log_user 0
+eval spawn $cmd
+log_user 1
+
+expect {
+    "Enter the passphrase" {
+        send -- "$passphrase\r"
+        exp_continue
+    }
+    eof
+}
+
+lassign [wait] pid spawnid os_error_flag exit_status
+exit $exit_status
