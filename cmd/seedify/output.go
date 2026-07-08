@@ -403,6 +403,56 @@ func (o *cliOut) LabeledBlock(label string, lines []string) {
 	fmt.Println(o.borderStyle.Render(end))
 }
 
+// AndroidJKSSecretsSection prints the CI/CD environment variables derived from a
+// generated JKS keystore. keystorePath is shown in the relationship text only.
+func (o *cliOut) AndroidJKSSecretsSection(keystorePath, alias, storePassword, keyPassword, jksBase64 string) {
+	o.SectionGap()
+	o.Section("Android signing secrets")
+	o.Blank()
+	o.androidSigningSecret(
+		"ANDROID_KEYSTORE_BASE64",
+		"is the JKS file — base64-encoded contents of "+keystorePath,
+		jksBase64,
+		true,
+	)
+	o.androidSigningSecret(
+		"ANDROID_KEY_ALIAS",
+		"chosen when you created the keystore — set via --jks-alias; verify with keytool -list -keystore "+keystorePath,
+		alias,
+		false,
+	)
+	o.androidSigningSecret(
+		"ANDROID_STORE_PASSWORD",
+		"password you set when creating the keystore — required to open the file; cannot be extracted from the JKS",
+		storePassword,
+		true,
+	)
+	o.androidSigningSecret(
+		"ANDROID_KEY_PASSWORD",
+		"password for the key entry inside the keystore — set at creation; for --to-jks this is the same as the store password",
+		keyPassword,
+		true,
+	)
+}
+
+func (o *cliOut) androidSigningSecret(name, relationship, value string, sensitive bool) {
+	if !o.color {
+		fmt.Println(name)
+		fmt.Println(value)
+		fmt.Printf("(%s)\n\n", relationship)
+		return
+	}
+
+	fmt.Println(o.labelStyle.Render(name))
+	valueStyle := o.valueStyle
+	if sensitive {
+		valueStyle = o.sensitiveStyle
+	}
+	fmt.Println(valueStyle.Render(value))
+	fmt.Println(o.labelStyle.Render("(" + relationship + ")"))
+	fmt.Println()
+}
+
 // NostrKeyBlock prints the four-line Nostr key export used by --phrases output.
 func (o *cliOut) NostrKeyBlock(npub, pubHex, nsec, privHex string) {
 	border := "----- nPubKey / hexPubKey / nSecKey / hexSecKey -----"

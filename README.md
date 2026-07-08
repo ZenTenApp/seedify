@@ -218,7 +218,7 @@ fmt.Println(keys.PrimaryAddress) // 4...
 fmt.Println(keys.Subaddresses)   // [8..., 8..., 8..., 8..., 8...]
 
 // Feather-compatible Monero seed offset passphrase.
-// This is NOT seedify's --secret-bunker; it is applied only during
+// This is NOT seedify's --brain-bunker; it is applied only during
 // Monero address derivation/restoration.
 offsetKeys, _ := seedify.DeriveMoneroKeysWithSeedOffset(polyseed, 5, "my-offset")
 fmt.Println(offsetKeys.PrimaryAddress) // 4... different wallet
@@ -363,7 +363,7 @@ and **`--words`**: emit *only* the requested output — no SSH key material, no 
 address. Use these when you only need a specific seed phrase or address.
 
 **Exclusive flags** (`--brave`, `--zentenprofile`, `--to-rsa`, `--to-dkim`, `--to-dnssec`,
-`--to-onion`, `--to-i2p`, `--to-pgp`): each produces a single focused output and bypasses
+`--to-jks`, `--to-onion`, `--to-i2p`, `--to-pgp`): each produces a single focused output and bypasses
 seed phrase generation entirely.
 
 ### Flags
@@ -371,7 +371,7 @@ seed phrase generation entirely.
 | Flag | Description |
 |------|-------------|
 | `-w, --words` | Word counts to generate, comma-separated (12,15,16,18,21,24) |
-| `--secret-bunker` | Combine with SSH key seed for additional entropy |
+| `--brain-bunker` | Derive an ephemeral SSH key from this secret and use that key for all seed/address output |
 | `--config` | INI config file for color overrides (default: `~/.seedify.ini`) |
 | `--brave` | Generate 25-word Brave Sync phrase |
 | `--full` | Print default word counts and all chain derivations (with full preamble) |
@@ -387,6 +387,7 @@ seed phrase generation entirely.
 | `--sshkey-qr` | Print only the encrypted OpenSSH private key as one raw base64 line, followed by a terminal QR code containing that same raw line |
 | `--zentenprofile` | Output public keys and addresses as DNS JSON |
 | `--to-dnssec` | Derive a DNSSEC RSASHA256 keypair; use with `--dnssec-domain`, `--dnssec-ksk`/`--dnssec-zsk`, and optional `--output <dir>` |
+| `--to-jks` | Derive an RSA keypair and self-signed X.509 certificate as a Java KeyStore; use with `--jks-alias`, `--output`, and optional `--bits`, `--jks-validity`, `--jks-dn` |
 | `--publish` | Publish ZentenProfile NIP-78 Kind 30078 events to relays (with `--zentenprofile`): one event per selected label |
 | `--blockchains` | Comma-separated labels to publish with `--zentenprofile --publish`; default is all labels |
 | `--polyseed-year` | Override Polyseed birthday year (default: current year) |
@@ -448,14 +449,15 @@ Most shells (bash, zsh) ignore commands that start with a space when
   password-protected. Unprotected keys are rejected.
 - **One-way derivation**: Seed phrases cannot be used to recover the original
   SSH key. The derivation is intentionally irreversible.
-- **Deterministic output**: The same key + passphrase always produces the same
-  mnemonic. This means the mnemonic is only as secure as the SSH key and
-  passphrase.
-- **Seed passphrase**: Use `--secret-bunker` (CLI) or the `seedPassphrase`
-  parameter (library) to add entropy beyond the SSH key alone. Different
-  passphrases produce completely different mnemonics.
+- **Deterministic output**: The same active key always produces the same
+  mnemonic. This means the mnemonic is only as secure as the SSH key material
+  used to derive it.
+- **Brain bunker**: Use `--brain-bunker` to derive an ephemeral Ed25519 SSH key
+  from the original SSH key plus the bunker secret. Seedify then uses that
+  ephemeral key for all seed/address output as though it were the input key.
+  Different bunker secrets produce completely different active keys and outputs.
 - **Monero seed offset**: `--xmr-seed-offset` is different from
-  `--secret-bunker`. It does not change the generated Polyseed or legacy seed;
+  `--brain-bunker`. It does not change the generated Polyseed or legacy seed;
   it applies Monero's Feather-compatible seed offset passphrase when deriving
   Monero addresses. To restore that wallet in Feather, enter the shown Monero
   seed plus the exact same seed offset passphrase.

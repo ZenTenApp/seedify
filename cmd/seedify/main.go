@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -86,31 +87,31 @@ var (
 			Background(lipgloss.AdaptiveColor{Light: completeColor("#FFEBEB", "255", "7"), Dark: completeColor("#2B1A1A", "235", "8")}).
 			Padding(1, 2) //nolint:mnd
 
-	language              string
-	wordCountStr          string
-	seedPassphrase        string
-	secretBunkerKDFRounds int
-	bip39Passphrase       string
-	configPath            string
-	brave                 bool
-	full                  bool
-	nostr                 bool
-	bitcoin               bool
-	ethereum              bool
-	zcash                 bool
-	solana                bool
-	tron                  bool
-	monero                bool
-	moneroLegacy          bool
-	xmrSeedOffset         string
-	beldex                bool
-	sshKeyQR              bool
-	zentenprofile         bool
-	publishRelays         string
-	blockchains           string
-	polyseedYear          string
-	polyseedMonth         string
-	polyseedAll           bool
+	language             string
+	wordCountStr         string
+	seedPassphrase       string
+	brainBunkerKDFRounds int
+	bip39Passphrase      string
+	configPath           string
+	brave                bool
+	full                 bool
+	nostr                bool
+	bitcoin              bool
+	ethereum             bool
+	zcash                bool
+	solana               bool
+	tron                 bool
+	monero               bool
+	moneroLegacy         bool
+	xmrSeedOffset        string
+	beldex               bool
+	sshKeyQR             bool
+	zentenprofile        bool
+	publishRelays        string
+	blockchains          string
+	polyseedYear         string
+	polyseedMonth        string
+	polyseedAll          bool
 
 	// derive-key flags.
 	deriveKeyToRSA           bool
@@ -121,8 +122,12 @@ var (
 	deriveKeyToWireGuard     bool
 	deriveKeyPKCS8           bool
 	deriveKeyToPGP           bool
+	deriveKeyToJKS           bool
 	deriveKeyPGPName         string
 	deriveKeyPGPEmail        string
+	deriveKeyJKSAlias        string
+	deriveKeyJKSValidity     int
+	deriveKeyJKSDN           string
 	deriveKeyOutput          string
 	deriveKeyBits            int
 	deriveKeyDKIMSelector    string
@@ -158,7 +163,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --words 12 --nostr
   seedify ~/.ssh/id_ed25519 --words 12,24 --nostr
   seedify ~/.ssh/id_ed25519 --nostr
-  seedify ~/.ssh/id_ed25519 --words 12 --secret-bunker "my-passphrase"
+  seedify ~/.ssh/id_ed25519 --words 12 --brain-bunker "my-passphrase"
   seedify ~/.ssh/id_ed25519 --btc --bip39-passphrase "my-wallet-passphrase"
   seedify ~/.ssh/id_ed25519 --eth --bip39-passphrase "my-wallet-passphrase"
   seedify ~/.ssh/id_ed25519 --brave
@@ -175,7 +180,8 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --to-dkim --output /etc/opendkim/keys/mail.private
   seedify ~/.ssh/id_ed25519 --to-dkim --dkim-selector mail --dkim-domain example.com --output /etc/opendkim/keys/mail.private
   seedify deployment-ssh-key --to-dkim --dkim-domain mail1.npub.cx --dkim-selector mail2026
-  seedify ~/.ssh/id_ed25519 --to-dnssec --dnssec-domain example.com --dnssec-ksk --output ./dnssec-keys`,
+  seedify ~/.ssh/id_ed25519 --to-dnssec --dnssec-domain example.com --dnssec-ksk --output ./dnssec-keys
+  seedify ~/.ssh/id_ed25519 --to-jks --bits 2048 --jks-alias zenten --jks-validity 10000 --output zenten-release.jks`,
 		Version:      fmt.Sprintf("%s (commit %s, built %s)", version, commit, date),
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
@@ -206,14 +212,14 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			}
 
 			// --reuse-passphrase only applies to commands that prompt for a
-			// fresh output passphrase: --to-rsa and --to-pgp.
-			if deriveKeyReusePassphrase && !deriveKeyToRSA && !deriveKeyToPGP {
-				return errors.New("--reuse-passphrase requires --to-rsa or --to-pgp")
+			// fresh output passphrase: --to-rsa, --to-pgp, and --to-jks.
+			if deriveKeyReusePassphrase && !deriveKeyToRSA && !deriveKeyToPGP && !deriveKeyToJKS {
+				return errors.New("--reuse-passphrase requires --to-rsa, --to-pgp, or --to-jks")
 			}
 
 			// Key derivation modes are mutually exclusive.
 			deriveModeCount := 0
-			for _, enabled := range []bool{deriveKeyToRSA, deriveKeyToDKIM, deriveKeyToDNSSEC, deriveKeyToPGP, deriveKeyToOnion, deriveKeyToI2P, deriveKeyToWireGuard} {
+			for _, enabled := range []bool{deriveKeyToRSA, deriveKeyToDKIM, deriveKeyToDNSSEC, deriveKeyToPGP, deriveKeyToJKS, deriveKeyToOnion, deriveKeyToI2P, deriveKeyToWireGuard} {
 				if enabled {
 					deriveModeCount++
 				}
@@ -237,6 +243,18 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 			}
 			if deriveKeyToPGP && deriveKeyPGPEmail == "" {
 				return errors.New("--pgp-email is required with --to-pgp")
+			}
+
+			if deriveKeyToJKS {
+				if deriveKeyJKSAlias == "" {
+					return errors.New("--jks-alias is required with --to-jks")
+				}
+				if deriveKeyOutput == "" {
+					return errors.New("--output is required with --to-jks")
+				}
+				if deriveKeyJKSValidity < 1 {
+					return errors.New("--jks-validity must be at least 1")
+				}
 			}
 
 			// Handle --to-onion: derive a Tor v3 hidden service identity from the Ed25519 key.
@@ -274,11 +292,16 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				return runDerivePGPKey(keyPath)
 			}
 
-			if secretBunkerKDFRounds < 1 {
-				return errors.New("--secret-bunker-kdf-rounds must be at least 1")
+			// Handle --to-jks: derive an RSA keypair and self-signed certificate as a JKS keystore.
+			if deriveKeyToJKS {
+				return runDeriveJKSKey(keyPath)
 			}
-			if secretBunkerKDFRounds != defaultOpenSSHBcryptKDFRounds && seedPassphrase == "" {
-				return errors.New("--secret-bunker-kdf-rounds requires --secret-bunker")
+
+			if brainBunkerKDFRounds < 1 {
+				return errors.New("--brain-bunker-kdf-rounds must be at least 1")
+			}
+			if brainBunkerKDFRounds != defaultOpenSSHBcryptKDFRounds && seedPassphrase == "" {
+				return errors.New("--brain-bunker-kdf-rounds requires --brain-bunker")
 			}
 
 			// --xmr-seed-offset only applies to Monero address derivation.
@@ -573,9 +596,9 @@ PowerShell:
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&language, "language", "l", "en", "Language")
 	rootCmd.PersistentFlags().StringVarP(&wordCountStr, "words", "w", "", "Word counts to generate (comma-separated: 12,15,18,21,24)")
-	rootCmd.PersistentFlags().StringVar(&seedPassphrase, "secret-bunker", "", "Derive and use an ephemeral SSH key from this secret for all seed/address output")
-	rootCmd.PersistentFlags().IntVar(&secretBunkerKDFRounds, "secret-bunker-kdf-rounds", defaultOpenSSHBcryptKDFRounds, "bcrypt KDF rounds for encrypting the ephemeral SSH private key generated by --secret-bunker")
-	rootCmd.PersistentFlags().StringVar(&bip39Passphrase, "bip39-passphrase", "", "Optional BIP39 extension passphrase (25th word) when deriving wallet addresses from mnemonics; not the same as --secret-bunker")
+	rootCmd.PersistentFlags().StringVar(&seedPassphrase, "brain-bunker", "", "Derive and use an ephemeral SSH key from this secret for all seed/address output")
+	rootCmd.PersistentFlags().IntVar(&brainBunkerKDFRounds, "brain-bunker-kdf-rounds", defaultOpenSSHBcryptKDFRounds, "bcrypt KDF rounds for encrypting the ephemeral SSH private key generated by --brain-bunker")
+	rootCmd.PersistentFlags().StringVar(&bip39Passphrase, "bip39-passphrase", "", "Optional BIP39 extension passphrase (25th word) when deriving wallet addresses from mnemonics; not the same as --brain-bunker")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "~/.seedify.ini", "INI config file for color overrides")
 	rootCmd.PersistentFlags().BoolVar(&brave, "brave", false, "Generate 25-word phrase with Brave Sync")
 	rootCmd.PersistentFlags().BoolVar(&full, "full", false, "Print full output (default word counts, Nostr keys, crypto derivations)")
@@ -604,17 +627,21 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToWireGuard, "to-wireguard", false, "Derive a WireGuard static keypair from the input Ed25519 key; prints private and public keys in base64 (wg format)")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyPKCS8, "openssl-compatible", false, "Write an encrypted PKCS#8 PEM file instead of OpenSSH format (used with --to-rsa; compatible with openssl pkey -check)")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyToPGP, "to-pgp", false, "Derive an OpenPGP RSA keypair and write an ASCII-armored secret key (.asc) to --output")
+	rootCmd.PersistentFlags().BoolVar(&deriveKeyToJKS, "to-jks", false, "Derive an RSA keypair and self-signed X.509 certificate as a Java KeyStore (.jks) to --output")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyPGPName, "pgp-name", "", "Full name for the OpenPGP UID, e.g. Alice (used with --to-pgp)")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyPGPEmail, "pgp-email", "", "Email address for the OpenPGP UID, e.g. alice@example.com (used with --to-pgp)")
-	rootCmd.PersistentFlags().StringVar(&deriveKeyOutput, "output", "", "Output file path for the derived key (used with --to-rsa, --to-dkim, or --to-pgp)")
-	rootCmd.PersistentFlags().IntVar(&deriveKeyBits, "bits", 4096, "RSA key size in bits (2048, 3072, or 4096); used with --to-rsa, --to-dkim, or --to-pgp") //nolint:mnd
+	rootCmd.PersistentFlags().StringVar(&deriveKeyJKSAlias, "jks-alias", "", "Keystore entry alias, e.g. zenten (used with --to-jks)")
+	rootCmd.PersistentFlags().IntVar(&deriveKeyJKSValidity, "jks-validity", seedify.DefaultJKSValidityDays, "Self-signed certificate validity in days (used with --to-jks)")
+	rootCmd.PersistentFlags().StringVar(&deriveKeyJKSDN, "jks-dn", "", "Certificate distinguished name, e.g. CN=Zenten, OU=Mobile (used with --to-jks; default: CN=<jks-alias>)")
+	rootCmd.PersistentFlags().StringVar(&deriveKeyOutput, "output", "", "Output file path for the derived key (used with --to-rsa, --to-dkim, --to-pgp, or --to-jks)")
+	rootCmd.PersistentFlags().IntVar(&deriveKeyBits, "bits", 4096, "RSA key size in bits (2048, 3072, or 4096); used with --to-rsa, --to-dkim, --to-pgp, or --to-jks") //nolint:mnd
 	rootCmd.PersistentFlags().StringVar(&deriveKeyDKIMSelector, "dkim-selector", "mail", "DKIM selector name for the DNS TXT record (used with --to-dkim)")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyDKIMDomain, "dkim-domain", "", "Domain for the DKIM DNS TXT record label, e.g. example.com (used with --to-dkim)")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyDNSSECDomain, "dnssec-domain", "", "Zone name for DNSSEC output, e.g. example.com (used with --to-dnssec)")
 	rootCmd.PersistentFlags().IntVar(&deriveKeyDNSSECAlgorithm, "dnssec-algorithm", seedify.DNSSECAlgorithmRSASHA256, "DNSSEC algorithm number (8 = RSASHA256; used with --to-dnssec)")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyDNSSECKSK, "dnssec-ksk", false, "Generate a DNSSEC KSK with flags 257 (default for --to-dnssec)")
 	rootCmd.PersistentFlags().BoolVar(&deriveKeyDNSSECZSK, "dnssec-zsk", false, "Generate a DNSSEC ZSK with flags 256")
-	rootCmd.PersistentFlags().BoolVar(&deriveKeyReusePassphrase, "reuse-passphrase", false, "Reuse the source key's passphrase to protect the derived key (used with --to-rsa or --to-pgp); requires the source key to be password-protected")
+	rootCmd.PersistentFlags().BoolVar(&deriveKeyReusePassphrase, "reuse-passphrase", false, "Reuse the source key's passphrase to protect the derived key (used with --to-rsa, --to-pgp, or --to-jks); requires the source key to be password-protected")
 	rootCmd.AddCommand(manCmd)
 	rootCmd.AddCommand(braveSync25thCmd)
 	rootCmd.AddCommand(completionCmd)
@@ -1501,6 +1528,84 @@ func runDerivePGPKey(keyPath string) error {
 	return nil
 }
 
+// runDeriveJKSKey handles --to-jks: derives an RSA keypair and self-signed
+// X.509 certificate from the source Ed25519 key, then writes a password-protected
+// Java KeyStore (.jks) file to --output.
+//
+//nolint:funlen,cyclop
+func runDeriveJKSKey(keyPath string) error {
+	f, err := openFileOrStdin(keyPath)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	bts, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+
+	var sourcePass []byte
+	key, err := parsePrivateKey(bts, nil)
+	if err != nil && isPasswordError(err) {
+		sourcePass, err = askKeyPassphrase(keyPath)
+		if err != nil {
+			return err
+		}
+		key, err = parsePrivateKey(bts, sourcePass)
+		if err != nil {
+			return fmt.Errorf("could not parse key with passphrase: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("could not parse key: %w", err)
+	}
+
+	ed25519Key, ok := key.(*ed25519.PrivateKey)
+	if !ok {
+		return unsupportedKeyTypeError(key)
+	}
+
+	var dn pkix.Name
+	if deriveKeyJKSDN != "" {
+		parsedDN, parseErr := seedify.ParseJKSDistinguishedName(deriveKeyJKSDN)
+		if parseErr != nil {
+			return fmt.Errorf("invalid --jks-dn: %w", parseErr)
+		}
+		dn = parsedDN
+	}
+
+	fmt.Fprintf(os.Stderr, "Deriving %d-bit RSA keypair for JKS alias %q (this may take a moment)...\n", deriveKeyBits, deriveKeyJKSAlias)
+
+	jksPair, deriveErr := seedify.DeriveJKSKeypair(ed25519Key, deriveKeyJKSAlias, deriveKeyBits, deriveKeyJKSValidity, dn)
+	if deriveErr != nil {
+		return fmt.Errorf("could not derive JKS keypair: %w", deriveErr)
+	}
+
+	outputPass, err := readOutputPassphrase("JKS keystore", sourcePass)
+	if err != nil {
+		return err
+	}
+
+	jksBytes, err := seedify.EncodeJKS(jksPair, outputPass)
+	if err != nil {
+		return fmt.Errorf("could not encode JKS keystore: %w", err)
+	}
+
+	if writeErr := os.WriteFile(deriveKeyOutput, jksBytes, 0o600); writeErr != nil { //nolint:mnd
+		return fmt.Errorf("could not write JKS keystore to %s: %w", deriveKeyOutput, writeErr)
+	}
+
+	jksBase64 := base64.StdEncoding.EncodeToString(jksBytes)
+	storePassword := string(outputPass)
+
+	fmt.Fprintf(os.Stderr, "JKS keystore written to: %s\n", deriveKeyOutput)
+	fmt.Fprintf(os.Stderr, "Verify with: keytool -list -keystore %s -alias %s\n", deriveKeyOutput, deriveKeyJKSAlias)
+
+	out.AndroidJKSSecretsSection(deriveKeyOutput, deriveKeyJKSAlias, storePassword, storePassword, jksBase64)
+
+	return nil
+}
+
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -1587,7 +1692,7 @@ func oneLinePrivateKeyRaw(keyBytes []byte) (string, error) {
 }
 
 // generateBraveSyncPhrase generates a 25-word seed phrase with Brave Sync.
-// If seedPassphrase is set, it first activates the derived secret-bunker SSH key.
+// If seedPassphrase is set, it first activates the derived brain-bunker SSH key.
 func generateBraveSyncPhrase(path string, seedPassphrase string) (string, error) {
 	f, err := openFileOrStdin(path)
 	if err != nil {
@@ -1625,7 +1730,7 @@ func generateBraveSyncPhrase(path string, seedPassphrase string) (string, error)
 		return "", unsupportedKeyTypeError(key)
 	}
 
-	ed25519Key, _, err = activateSecretBunkerSSHKey(ed25519Key, bts, seedPassphrase)
+	ed25519Key, _, err = activateBrainBunkerSSHKey(ed25519Key, bts, seedPassphrase)
 	if err != nil {
 		return "", err
 	}
@@ -1788,7 +1893,7 @@ func generatePhrasesOutput(keyPath string, seedPassphrase string) error {
 	}
 
 	privateKeyPEM := bts
-	ed25519Key, privateKeyPEM, err = activateSecretBunkerSSHKey(ed25519Key, privateKeyPEM, seedPassphrase)
+	ed25519Key, privateKeyPEM, err = activateBrainBunkerSSHKey(ed25519Key, privateKeyPEM, seedPassphrase)
 	if err != nil {
 		return err
 	}
@@ -2040,7 +2145,7 @@ func generateUnifiedOutput(keyPath string, wordCounts []int, seedPassphrase stri
 	}
 
 	privateKeyPEM := bts
-	ed25519Key, privateKeyPEM, err = activateSecretBunkerSSHKey(ed25519Key, privateKeyPEM, seedPassphrase)
+	ed25519Key, privateKeyPEM, err = activateBrainBunkerSSHKey(ed25519Key, privateKeyPEM, seedPassphrase)
 	if err != nil {
 		return err
 	}
@@ -2726,25 +2831,25 @@ func displayKeyPreamble(ed25519Key *ed25519.PrivateKey, privateKeyPEM []byte, se
 	return nil
 }
 
-func activateSecretBunkerSSHKey(sourceKey *ed25519.PrivateKey, sourcePrivateKeyPEM []byte, secretBunker string) (*ed25519.PrivateKey, []byte, error) {
-	if secretBunker == "" {
+func activateBrainBunkerSSHKey(sourceKey *ed25519.PrivateKey, sourcePrivateKeyPEM []byte, brainBunker string) (*ed25519.PrivateKey, []byte, error) {
+	if brainBunker == "" {
 		return sourceKey, sourcePrivateKeyPEM, nil
 	}
 
-	ephemeralKey := deriveSecretBunkerSSHKey(sourceKey, secretBunker)
-	pemBlock, marshalErr := marshalOpenSSHEd25519PrivateKeyWithPassphraseKDFRounds(ephemeralKey, "", []byte(secretBunker), secretBunkerKDFRounds)
+	ephemeralKey := deriveBrainBunkerSSHKey(sourceKey, brainBunker)
+	pemBlock, marshalErr := marshalOpenSSHEd25519PrivateKeyWithPassphraseKDFRounds(ephemeralKey, "", []byte(brainBunker), brainBunkerKDFRounds)
 	if marshalErr != nil {
-		return nil, nil, fmt.Errorf("could not encode secret-bunker SSH key: %w", marshalErr)
+		return nil, nil, fmt.Errorf("could not encode brain-bunker SSH key: %w", marshalErr)
 	}
 	privateKeyPEM := pem.EncodeToMemory(pemBlock)
 	if privateKeyPEM == nil {
-		return nil, nil, errors.New("could not encode secret-bunker SSH key PEM")
+		return nil, nil, errors.New("could not encode brain-bunker SSH key PEM")
 	}
 	return &ephemeralKey, privateKeyPEM, nil
 }
 
-func deriveSecretBunkerSSHKey(sourceKey *ed25519.PrivateKey, secretBunker string) ed25519.PrivateKey {
-	bunkerHash := sha256.Sum256([]byte(secretBunker))
+func deriveBrainBunkerSSHKey(sourceKey *ed25519.PrivateKey, brainBunker string) ed25519.PrivateKey {
+	bunkerHash := sha256.Sum256([]byte(brainBunker))
 	seedMaterial := append(bunkerHash[:], sourceKey.Seed()...)
 	derivedSeed := sha256.Sum256(seedMaterial)
 	return ed25519.NewKeyFromSeed(derivedSeed[:])
@@ -2973,7 +3078,7 @@ func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seed
 		return nil, nil, unsupportedKeyTypeError(key)
 	}
 
-	ed25519Key, _, err = activateSecretBunkerSSHKey(ed25519Key, bts, seedPassphrase)
+	ed25519Key, _, err = activateBrainBunkerSSHKey(ed25519Key, bts, seedPassphrase)
 	if err != nil {
 		return nil, nil, err
 	}

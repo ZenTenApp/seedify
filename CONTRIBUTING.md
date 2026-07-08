@@ -221,7 +221,7 @@ This project handles cryptographic key material. When contributing:
 - **Never** commit real SSH private keys, mnemonics, or passphrases.
 - **Never** log or print private keys in new code paths unless that is the
   explicit, documented purpose of a CLI flag.
-- Treat `--secret-bunker` and SSH passphrases as secrets in tests and examples.
+- Treat `--brain-bunker` and SSH passphrases as secrets in tests and examples.
 - If you find a security issue, report it privately to the maintainers rather
   than opening a public issue with exploit details.
 

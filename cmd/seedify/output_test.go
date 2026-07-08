@@ -71,6 +71,40 @@ func TestCLIOut_PEMBlockDelimited(t *testing.T) {
 	}
 }
 
+func TestCLIOut_AndroidJKSSecretsSection(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
+	o := newCLIOut()
+	got := captureStdout(func() {
+		o.AndroidJKSSecretsSection(
+			"zenten-release.jks",
+			"zenten",
+			"store-pass",
+			"store-pass",
+			"QUJDRA==",
+		)
+	})
+
+	for _, want := range []string{
+		"[Android signing secrets]",
+		"ANDROID_KEYSTORE_BASE64",
+		"QUJDRA==",
+		"is the JKS file — base64-encoded contents of zenten-release.jks",
+		"ANDROID_KEY_ALIAS",
+		"zenten",
+		"chosen when you created the keystore",
+		"ANDROID_STORE_PASSWORD",
+		"store-pass",
+		"cannot be extracted from the JKS",
+		"ANDROID_KEY_PASSWORD",
+		"same as the store password",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q\nfull output:\n%s", want, got)
+		}
+	}
+}
+
 func TestCLIOut_TreeAndSubFields(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 

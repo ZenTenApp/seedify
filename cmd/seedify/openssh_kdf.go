@@ -55,7 +55,7 @@ type openSSHEd25519PrivateKeyWithKDF struct {
 // key in OpenSSH private-key format, encrypting it with aes256-ctr and bcrypt
 // KDF using the requested round count. x/crypto/ssh's public helper hardcodes
 // the round count, so seedify uses this narrowly-scoped marshaller for
-// --secret-bunker-kdf-rounds.
+// --brain-bunker-kdf-rounds.
 func marshalOpenSSHEd25519PrivateKeyWithPassphraseKDFRounds(key ed25519.PrivateKey, comment string, passphrase []byte, rounds int) (*pem.Block, error) {
 	if len(key) != ed25519.PrivateKeySize {
 		return nil, fmt.Errorf("ssh: ed25519 private key unexpected length %d", len(key))
