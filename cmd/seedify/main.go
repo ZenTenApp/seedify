@@ -631,7 +631,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&deriveKeyPGPName, "pgp-name", "", "Full name for the OpenPGP UID, e.g. Alice (used with --to-pgp)")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyPGPEmail, "pgp-email", "", "Email address for the OpenPGP UID, e.g. alice@example.com (used with --to-pgp)")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyJKSAlias, "jks-alias", "", "Keystore entry alias, e.g. zenten (used with --to-jks)")
-	rootCmd.PersistentFlags().IntVar(&deriveKeyJKSValidity, "jks-validity", seedify.DefaultJKSValidityDays, "Self-signed certificate validity in days (used with --to-jks)") //nolint:mnd
+	rootCmd.PersistentFlags().IntVar(&deriveKeyJKSValidity, "jks-validity", seedify.DefaultJKSValidityDays, "Self-signed certificate validity in days (used with --to-jks)")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyJKSDN, "jks-dn", "", "Certificate distinguished name, e.g. CN=Zenten, OU=Mobile (used with --to-jks; default: CN=<jks-alias>)")
 	rootCmd.PersistentFlags().StringVar(&deriveKeyOutput, "output", "", "Output file path for the derived key (used with --to-rsa, --to-dkim, --to-pgp, or --to-jks)")
 	rootCmd.PersistentFlags().IntVar(&deriveKeyBits, "bits", 4096, "RSA key size in bits (2048, 3072, or 4096); used with --to-rsa, --to-dkim, --to-pgp, or --to-jks") //nolint:mnd
@@ -1569,7 +1569,7 @@ func runDeriveJKSKey(keyPath string) error {
 	if deriveKeyJKSDN != "" {
 		parsedDN, parseErr := seedify.ParseJKSDistinguishedName(deriveKeyJKSDN)
 		if parseErr != nil {
-			return parseErr
+			return fmt.Errorf("invalid --jks-dn: %w", parseErr)
 		}
 		dn = parsedDN
 	}
