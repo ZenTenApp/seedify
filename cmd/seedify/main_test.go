@@ -166,17 +166,15 @@ func TestBuildWordCounts(t *testing.T) {
 	}
 }
 
-func TestActivateBrainBunkerSSHKeyReuseKeyPassphrase(t *testing.T) {
+func TestActivateBrainBunkerSSHKeyPassphraseDefaultsToSourcePassphrase(t *testing.T) {
 	_, sourceKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("generate ed25519 key: %v", err)
 	}
 
-	oldReuse := brainBunkerReuseKeyPassphrase
 	oldRounds := brainBunkerKDFRounds
 	brainBunkerKDFRounds = defaultOpenSSHBcryptKDFRounds
 	t.Cleanup(func() {
-		brainBunkerReuseKeyPassphrase = oldReuse
 		brainBunkerKDFRounds = oldRounds
 	})
 
@@ -184,10 +182,9 @@ func TestActivateBrainBunkerSSHKeyReuseKeyPassphrase(t *testing.T) {
 	sourcePass := []byte("source-key-passphrase")
 	originalPEM := []byte("original key pem")
 
-	brainBunkerReuseKeyPassphrase = true
-	derivedKey, derivedPEM, err := activateBrainBunkerSSHKey(&sourceKey, originalPEM, brainBunker, sourcePass)
+	derivedKey, derivedPEM, err := activateBrainBunkerSSHKey(&sourceKey, originalPEM, brainBunker, sourcePass, "")
 	if err != nil {
-		t.Fatalf("activateBrainBunkerSSHKey with reuse: %v", err)
+		t.Fatalf("activateBrainBunkerSSHKey default: %v", err)
 	}
 	if derivedKey == &sourceKey {
 		t.Fatalf("expected brain bunker to return derived key")
@@ -196,40 +193,32 @@ func TestActivateBrainBunkerSSHKeyReuseKeyPassphrase(t *testing.T) {
 		t.Fatalf("expected derived PEM to parse with source key passphrase: %v", err)
 	}
 	if _, err := ssh.ParseRawPrivateKeyWithPassphrase(derivedPEM, []byte(brainBunker)); err == nil {
-		t.Fatalf("expected derived PEM not to parse with brain bunker passphrase when reuse flag is set")
-	}
-
-	brainBunkerReuseKeyPassphrase = false
-	_, derivedPEM, err = activateBrainBunkerSSHKey(&sourceKey, originalPEM, brainBunker, sourcePass)
-	if err != nil {
-		t.Fatalf("activateBrainBunkerSSHKey default: %v", err)
-	}
-	if _, err := ssh.ParseRawPrivateKeyWithPassphrase(derivedPEM, []byte(brainBunker)); err != nil {
-		t.Fatalf("expected default derived PEM to parse with brain bunker passphrase: %v", err)
-	}
-	if _, err := ssh.ParseRawPrivateKeyWithPassphrase(derivedPEM, sourcePass); err == nil {
-		t.Fatalf("expected default derived PEM not to parse with source key passphrase")
+		t.Fatalf("expected derived PEM not to parse with brain bunker passphrase")
 	}
 }
 
-func TestActivateBrainBunkerSSHKeyReuseKeyPassphraseRequiresSourcePass(t *testing.T) {
+func TestActivateBrainBunkerSSHKeyOverrideKeyPassphrase(t *testing.T) {
 	_, sourceKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("generate ed25519 key: %v", err)
 	}
 
-	oldReuse := brainBunkerReuseKeyPassphrase
 	oldRounds := brainBunkerKDFRounds
-	brainBunkerReuseKeyPassphrase = true
 	brainBunkerKDFRounds = defaultOpenSSHBcryptKDFRounds
 	t.Cleanup(func() {
-		brainBunkerReuseKeyPassphrase = oldReuse
 		brainBunkerKDFRounds = oldRounds
 	})
 
-	_, _, err = activateBrainBunkerSSHKey(&sourceKey, []byte("original key pem"), "bunker-passphrase", nil)
-	if err == nil || !strings.Contains(err.Error(), "--brain-bunker-reuse-key-passphrase requires the source key to be password-protected") {
-		t.Fatalf("expected source passphrase requirement error, got %v", err)
+	const overridePass = "new-derived-key-passphrase"
+	_, derivedPEM, err := activateBrainBunkerSSHKey(&sourceKey, []byte("original key pem"), "bunker-passphrase", nil, overridePass)
+	if err != nil {
+		t.Fatalf("activateBrainBunkerSSHKey with override: %v", err)
+	}
+	if _, err := ssh.ParseRawPrivateKeyWithPassphrase(derivedPEM, []byte(overridePass)); err != nil {
+		t.Fatalf("expected derived PEM to parse with override passphrase: %v", err)
+	}
+	if _, err := ssh.ParseRawPrivateKeyWithPassphrase(derivedPEM, []byte("bunker-passphrase")); err == nil {
+		t.Fatalf("expected derived PEM not to parse with brain bunker passphrase")
 	}
 }
 
