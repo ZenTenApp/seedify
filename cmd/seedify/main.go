@@ -54,8 +54,9 @@ const (
 	polyseedBirthdayEpochUnix = uint64(1635768000)
 	polyseedBirthdayTimeStep  = uint64(2629746)
 
-	kindNIP78         = 30078
-	zentenProfileITag = "blockchains"
+	kindNostrProfileMetadata = 0
+	kindNIP78                = 30078
+	zentenProfileITag        = "blockchains"
 
 	zentenProfileMoneroDailySubaddressMax = 9
 	defaultXMRAddressCount                = 9
@@ -363,6 +364,9 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 							if strings.Contains(err.Error(), "key is not password-protected") {
 								return formatPasswordError(err)
 							}
+							return err
+						}
+						if err := publishKind0CryptoTagsToRelays(record, nostrKeys, relays, blockchains); err != nil {
 							return err
 						}
 					}
@@ -3024,6 +3028,128 @@ func zentenProfilePublishEntries(record dnsRecord, labels string) []nip78Entry {
 	return entries
 }
 
+func zentenProfileCryptoEntries(record dnsRecord) []nip78Entry {
+	entries := make([]nip78Entry, 0, 24) //nolint:mnd
+	addEntry := func(name, value string) {
+		if value != "" {
+			entries = append(entries, nip78Entry{TagName: name, Value: value})
+		}
+	}
+	addEntry("bitcoin", record.Bitcoin)
+	addEntry("silentpayment", record.SilentPayment)
+	addEntry("paynym", record.PayNym)
+	addEntry("litecoin", record.Litecoin)
+	addEntry("dogecoin", record.Dogecoin)
+	addEntry("monero", record.Monero)
+	addEntry("cosmos", record.Cosmos)
+	addEntry("noble", record.Noble)
+	addEntry("arbitrum", record.Arbitrum)
+	addEntry("avalanche", record.Avalanche)
+	addEntry("base", record.Base)
+	addEntry("bnbchain", record.BNBChain)
+	addEntry("celo", record.Celo)
+	addEntry("cronos", record.Cronos)
+	addEntry("ethereum", record.Ethereum)
+	addEntry("hyperevm", record.HyperEVM)
+	addEntry("zcash", record.Zcash)
+	addEntry("optimism", record.Optimism)
+	addEntry("polygon", record.Polygon)
+	addEntry("solana", record.Solana)
+	addEntry("sui", record.Sui)
+	addEntry("tron", record.Tron)
+	addEntry("stellar", record.Stellar)
+	addEntry("ripple", record.Ripple)
+	return entries
+}
+
+func managedKind0CryptoTagNames() map[string]struct{} {
+	managed := make(map[string]struct{}, 24) //nolint:mnd
+	for _, entry := range zentenProfileCryptoEntries(dnsRecord{
+		Bitcoin:       "x",
+		SilentPayment: "x",
+		PayNym:        "x",
+		Litecoin:      "x",
+		Dogecoin:      "x",
+		Monero:        "x",
+		Cosmos:        "x",
+		Noble:         "x",
+		Arbitrum:      "x",
+		Avalanche:     "x",
+		Base:          "x",
+		BNBChain:      "x",
+		Celo:          "x",
+		Cronos:        "x",
+		Ethereum:      "x",
+		HyperEVM:      "x",
+		Zcash:         "x",
+		Optimism:      "x",
+		Polygon:       "x",
+		Solana:        "x",
+		Sui:           "x",
+		Tron:          "x",
+		Stellar:       "x",
+		Ripple:        "x",
+	}) {
+		managed[entry.TagName] = struct{}{}
+	}
+	return managed
+}
+
+func filteredKind0CryptoEntries(record dnsRecord, labels string) []nip78Entry {
+	entries := zentenProfileCryptoEntries(record)
+	selected := parseBlockchainLabels(labels)
+	if selected == nil {
+		return entries
+	}
+
+	filtered := make([]nip78Entry, 0, len(entries))
+	for _, entry := range entries {
+		if _, ok := selected[entry.TagName]; ok {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+func kind0CryptoTags(record dnsRecord, labels string) [][]string {
+	entries := filteredKind0CryptoEntries(record, labels)
+	tags := make([][]string, 0, len(entries))
+	for _, entry := range entries {
+		tags = append(tags, []string{entry.TagName, entry.Value})
+	}
+	return tags
+}
+
+func defaultKind0Content(nostrKeys *seedify.NostrKeys) (string, error) {
+	name := nostrKeys.Npub
+	if len(name) > 4 { //nolint:mnd
+		name = name[len(name)-4:]
+	}
+
+	content := map[string]string{
+		"name": name,
+	}
+	contentBytes, err := json.Marshal(content)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal default Kind 0 metadata content: %w", err)
+	}
+	return string(contentBytes), nil
+}
+
+func removeManagedKind0CryptoTags(tags nostrpkg.Tags) nostrpkg.Tags {
+	managed := managedKind0CryptoTagNames()
+	kept := make(nostrpkg.Tags, 0, len(tags))
+	for _, tag := range tags {
+		if len(tag) > 0 {
+			if _, ok := managed[tag[0]]; ok {
+				continue
+			}
+		}
+		kept = append(kept, tag)
+	}
+	return kept
+}
+
 // normalizeRelayURL prepends wss:// when no scheme is present; accepts wss:// and ws:// as-is.
 func normalizeRelayURL(raw string) string {
 	s := strings.TrimSpace(raw)
@@ -3271,6 +3397,56 @@ func buildZentenProfileEvent(nostrKeys *seedify.NostrKeys, tags [][]string, cont
 	return ev, nil
 }
 
+func buildKind0CryptoTagsEvent(existing *nostrpkg.Event, record *dnsRecord, nostrKeys *seedify.NostrKeys, labels string, createdAt nostrpkg.Timestamp) (*nostrpkg.Event, error) {
+	content, contentErr := defaultKind0Content(nostrKeys)
+	if contentErr != nil {
+		return nil, contentErr
+	}
+	tags := nostrpkg.Tags{}
+	if existing != nil {
+		content = existing.Content
+		tags = removeManagedKind0CryptoTags(existing.Tags)
+	}
+	tags = append(tags, tagsToNostrTags(kind0CryptoTags(*record, labels))...)
+
+	ev := &nostrpkg.Event{
+		PubKey:    nostrKeys.PubKeyHex,
+		CreatedAt: createdAt,
+		Kind:      kindNostrProfileMetadata,
+		Tags:      tags,
+		Content:   content,
+	}
+	if err := ev.Sign(nostrKeys.PrivKeyHex); err != nil {
+		return nil, fmt.Errorf("failed to sign Kind 0 metadata event: %w", err)
+	}
+	return ev, nil
+}
+
+func latestKind0Event(events []*nostrpkg.Event) *nostrpkg.Event {
+	var latest *nostrpkg.Event
+	for _, ev := range events {
+		if ev == nil {
+			continue
+		}
+		if latest == nil || ev.CreatedAt > latest.CreatedAt {
+			latest = ev
+		}
+	}
+	return latest
+}
+
+func fetchLatestKind0Event(ctx context.Context, relay *nostrpkg.Relay, pubkey string) (*nostrpkg.Event, error) {
+	events, err := relay.QuerySync(ctx, nostrpkg.Filter{
+		Authors: []string{pubkey},
+		Kinds:   []int{kindNostrProfileMetadata},
+		Limit:   1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return latestKind0Event(events), nil
+}
+
 func buildZentenProfileEvents(record *dnsRecord, nostrKeys *seedify.NostrKeys, labels string) ([]*nostrpkg.Event, error) {
 	createdAt := nostrpkg.Now()
 	publishEntries := zentenProfilePublishEntries(*record, labels)
@@ -3322,13 +3498,12 @@ func sleepWithContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func publishNIP78EventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, relayURL string) error {
-	label := nip78EventLabel(ev)
+func publishNostrEventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, relayURL string, label string) error {
 	var lastErr error
 	for attempt := 0; attempt <= nostrPublishMaxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := nostrPublishBackoff(attempt)
-			fmt.Fprintf(os.Stderr, "seedify: rate-limited publishing NIP-78 Kind 30078 event %s to %s; retrying in %s (attempt %d/%d)\n", label, relayURL, backoff, attempt, nostrPublishMaxRetries)
+			fmt.Fprintf(os.Stderr, "seedify: rate-limited publishing %s to %s; retrying in %s (attempt %d/%d)\n", label, relayURL, backoff, attempt, nostrPublishMaxRetries)
 			if err := sleepWithContext(ctx, backoff); err != nil {
 				return err
 			}
@@ -3339,11 +3514,20 @@ func publishNIP78EventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev
 			if isNostrRateLimitError(err) && attempt < nostrPublishMaxRetries {
 				continue
 			}
-			return fmt.Errorf("failed to publish NIP-78 Kind 30078 event %s to %s: %w", label, relayURL, err)
+			return fmt.Errorf("failed to publish %s to %s: %w", label, relayURL, err)
 		}
 		return nil
 	}
-	return fmt.Errorf("failed to publish NIP-78 Kind 30078 event %s to %s: %w", label, relayURL, lastErr)
+	return fmt.Errorf("failed to publish %s to %s: %w", label, relayURL, lastErr)
+}
+
+func publishNIP78EventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, relayURL string) error {
+	label := fmt.Sprintf("NIP-78 Kind 30078 event %s", nip78EventLabel(ev))
+	return publishNostrEventWithBackoff(ctx, relay, ev, relayURL, label)
+}
+
+func publishKind0EventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, relayURL string) error {
+	return publishNostrEventWithBackoff(ctx, relay, ev, relayURL, "Kind 0 metadata event")
 }
 
 func handleNIP78PublishFailure(ctx context.Context, relayURL string, label string, err error, consecutiveRateLimitFailures int) (int, error) {
@@ -3416,6 +3600,49 @@ func publishZentenProfileToRelays(record *dnsRecord, nostrKeys *seedify.NostrKey
 
 	if !publishedAny {
 		return errors.New("failed to publish any NIP-78 Kind 30078 events")
+	}
+	return nil
+}
+
+// publishKind0CryptoTagsToRelays fetches each relay's latest Kind 0 metadata event,
+// preserves its content and unmanaged tags, replaces all seedify-managed crypto tags,
+// and publishes a new Kind 0 event with current crypto address tags.
+func publishKind0CryptoTagsToRelays(record *dnsRecord, nostrKeys *seedify.NostrKeys, relays []string, labels string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), nostrPublishTimeout)
+	defer cancel()
+
+	publishedAny := false
+	for _, url := range relays {
+		fmt.Fprintf(os.Stderr, "seedify: connecting to %s for Kind 0 metadata update\n", url)
+		relay, err := nostrpkg.RelayConnect(ctx, url)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "seedify: failed to connect to %s for Kind 0 metadata update: %v\n", url, err)
+			continue
+		}
+
+		fmt.Fprintf(os.Stderr, "seedify: fetching current Kind 0 metadata event from %s\n", url)
+		existing, err := fetchLatestKind0Event(ctx, relay, nostrKeys.PubKeyHex)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "seedify: failed to fetch Kind 0 metadata event from %s: %v\n", url, err)
+			continue
+		}
+
+		ev, err := buildKind0CryptoTagsEvent(existing, record, nostrKeys, labels, nostrpkg.Now())
+		if err != nil {
+			return err
+		}
+
+		fmt.Fprintf(os.Stderr, "seedify: publishing Kind 0 metadata event with crypto address tags to %s\n", url)
+		if err := publishKind0EventWithBackoff(ctx, relay, ev, url); err != nil {
+			fmt.Fprintf(os.Stderr, "seedify: failed to publish Kind 0 metadata event to %s: %v\n", url, err)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "seedify: published Kind 0 metadata event with crypto address tags to %s\n", url)
+		publishedAny = true
+	}
+
+	if !publishedAny {
+		return errors.New("failed to publish Kind 0 metadata event to any relay")
 	}
 	return nil
 }

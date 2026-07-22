@@ -4,6 +4,7 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"os"
@@ -327,6 +328,101 @@ func TestZentenProfilePublishEntriesFiltersBlockchains(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("zentenProfilePublishEntries[%d] = %#v, want %#v", i, got[i], want[i])
 		}
+	}
+}
+
+func TestKind0CryptoTagsFilterAdditions(t *testing.T) {
+	t.Parallel()
+
+	record := dnsRecord{
+		Bitcoin:  "bc1example",
+		Ethereum: "0xeth",
+		Solana:   "solexample",
+		Monero:   "4example",
+	}
+
+	got := kind0CryptoTags(record, "ethereum,solana")
+	want := [][]string{{"ethereum", "0xeth"}, {"solana", "solexample"}}
+	if len(got) != len(want) {
+		t.Fatalf("kind0CryptoTags returned %d tags, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i][0] != want[i][0] || got[i][1] != want[i][1] {
+			t.Fatalf("kind0CryptoTags[%d] = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestBuildKind0CryptoTagsEventReplacesAllManagedTags(t *testing.T) {
+	t.Parallel()
+
+	privKey := nostrpkg.GeneratePrivateKey()
+	pubKey, err := nostrpkg.GetPublicKey(privKey)
+	if err != nil {
+		t.Fatalf("get public key: %v", err)
+	}
+
+	nostrKeys := &seedify.NostrKeys{PubKeyHex: pubKey, PrivKeyHex: privKey}
+	existing := &nostrpkg.Event{
+		PubKey:  pubKey,
+		Kind:    kindNostrProfileMetadata,
+		Content: `{"name":"alice"}`,
+		Tags: nostrpkg.Tags{
+			{"website", "https://example.com"},
+			{"bitcoin", "old-btc"},
+			{"ethereum", "old-eth"},
+			{"solana", "old-sol"},
+		},
+	}
+	record := &dnsRecord{Ethereum: "0xnew", Solana: "newsol"}
+
+	ev, err := buildKind0CryptoTagsEvent(existing, record, nostrKeys, "solana", nostrpkg.Timestamp(123))
+	if err != nil {
+		t.Fatalf("buildKind0CryptoTagsEvent: %v", err)
+	}
+	if ev.Kind != kindNostrProfileMetadata || ev.Content != existing.Content {
+		t.Fatalf("kind/content = %d/%q, want %d/%q", ev.Kind, ev.Content, kindNostrProfileMetadata, existing.Content)
+	}
+
+	wantTags := nostrpkg.Tags{{"website", "https://example.com"}, {"solana", "newsol"}}
+	if len(ev.Tags) != len(wantTags) {
+		t.Fatalf("Kind 0 tags = %#v, want %#v", ev.Tags, wantTags)
+	}
+	for i := range wantTags {
+		if len(ev.Tags[i]) != len(wantTags[i]) || ev.Tags[i][0] != wantTags[i][0] || ev.Tags[i][1] != wantTags[i][1] {
+			t.Fatalf("Kind 0 tag %d = %#v, want %#v", i, ev.Tags[i], wantTags[i])
+		}
+	}
+}
+
+func TestBuildKind0CryptoTagsEventWithoutExistingUsesGeneratedContent(t *testing.T) {
+	t.Parallel()
+
+	privKey := nostrpkg.GeneratePrivateKey()
+	pubKey, err := nostrpkg.GetPublicKey(privKey)
+	if err != nil {
+		t.Fatalf("get public key: %v", err)
+	}
+
+	npub := "npub1abcdef1234"
+	nostrKeys := &seedify.NostrKeys{Npub: npub, PubKeyHex: pubKey, PrivKeyHex: privKey}
+	record := &dnsRecord{Bitcoin: "bc1example", Solana: "newsol"}
+	ev, err := buildKind0CryptoTagsEvent(nil, record, nostrKeys, "", nostrpkg.Timestamp(123))
+	if err != nil {
+		t.Fatalf("buildKind0CryptoTagsEvent: %v", err)
+	}
+	var content map[string]string
+	if err := json.Unmarshal([]byte(ev.Content), &content); err != nil {
+		t.Fatalf("unmarshal content: %v", err)
+	}
+	if content["name"] != npub[len(npub)-4:] {
+		t.Fatalf("name = %q, want last 4 chars of npub %q", content["name"], npub[len(npub)-4:])
+	}
+	if _, ok := content["about"]; ok {
+		t.Fatalf("about field should not be written: %#v", content)
+	}
+	if len(ev.Tags) != 2 || ev.Tags[0][0] != "bitcoin" || ev.Tags[0][1] != "bc1example" || ev.Tags[1][0] != "solana" || ev.Tags[1][1] != "newsol" {
+		t.Fatalf("tags = %#v, want bitcoin and solana tags", ev.Tags)
 	}
 }
 
