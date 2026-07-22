@@ -389,8 +389,8 @@ seed phrase generation entirely.
 | `--zentenprofile` | Output public keys and addresses as DNS JSON |
 | `--to-dnssec` | Derive a DNSSEC RSASHA256 keypair; use with `--dnssec-domain`, `--dnssec-ksk`/`--dnssec-zsk`, and optional `--output <dir>` |
 | `--to-jks` | Derive an RSA keypair and self-signed X.509 certificate as a Java KeyStore; use with `--jks-alias`, `--output`, and optional `--bits`, `--jks-validity`, `--jks-dn` |
-| `--publish` | Publish ZentenProfile NIP-78 Kind 30078 events to relays (with `--zentenprofile`): one event per selected label |
-| `--blockchains` | Comma-separated labels to publish with `--zentenprofile --publish`; default is all labels |
+| `--publish` | Publish/update Nostr Kind 0 metadata crypto address tags to relays (with `--zentenprofile`) |
+| `--blockchains` | Comma-separated crypto labels to publish as Kind 0 tags with `--zentenprofile --publish`; default is all labels |
 | `--polyseed-year` | Override Polyseed birthday year (default: current year) |
 | `--polyseed-month` | Override Polyseed birthday month, 1–12 (default: January) |
 | `-l, --language` | Mnemonic language (default: en) |
