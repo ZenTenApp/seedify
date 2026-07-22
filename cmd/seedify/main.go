@@ -3442,7 +3442,7 @@ func fetchLatestKind0Event(ctx context.Context, relay *nostrpkg.Relay, pubkey st
 		Limit:   1,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query latest Kind 0 metadata event: %w", err)
 	}
 	return latestKind0Event(events), nil
 }
