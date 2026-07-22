@@ -55,22 +55,17 @@ const (
 	polyseedBirthdayTimeStep  = uint64(2629746)
 
 	kindNostrProfileMetadata = 0
-	kindNIP78                = 30078
-	zentenProfileITag        = "blockchains"
 
 	zentenProfileMoneroDailySubaddressMax = 9
 	defaultXMRAddressCount                = 9
 	zentenProfileBitcoinDailyAddressMax   = 99
 
-	nostrPublishDelay                   = 3 * time.Second
-	nostrPublishMaxRetries              = 3
-	nostrPublishSecondRetryAttempt      = 2
-	nostrPublishFirstRateLimitBackoff   = 5 * time.Second
-	nostrPublishSecondRateLimitBackoff  = 15 * time.Second
-	nostrPublishMaxRateLimitBackoff     = 30 * time.Second
-	nostrPublishRateLimitCooldown       = 30 * time.Second
-	nostrMaxConsecutiveRateLimitFailure = 3
-	nostrPublishTimeout                 = 15 * time.Minute
+	nostrPublishMaxRetries             = 3
+	nostrPublishSecondRetryAttempt     = 2
+	nostrPublishFirstRateLimitBackoff  = 5 * time.Second
+	nostrPublishSecondRateLimitBackoff = 15 * time.Second
+	nostrPublishMaxRateLimitBackoff    = 30 * time.Second
+	nostrPublishTimeout                = 15 * time.Minute
 )
 
 // Populated at build time via -ldflags (set by GoReleaser and `go build -ldflags`).
@@ -360,12 +355,6 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				if publishRelays != "" {
 					relays := parseRelayURLs(publishRelays)
 					if len(relays) > 0 {
-						if err := publishZentenProfileToRelays(record, nostrKeys, relays, blockchains); err != nil {
-							if strings.Contains(err.Error(), "key is not password-protected") {
-								return formatPasswordError(err)
-							}
-							return err
-						}
 						if err := publishKind0CryptoTagsToRelays(record, nostrKeys, relays, blockchains); err != nil {
 							return err
 						}
@@ -623,8 +612,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&beldex, "bdx", false, "Derive Beldex (BDX) address from 25-word legacy seed (same seed format as --xmr-legacy)")
 	rootCmd.PersistentFlags().BoolVar(&sshKeyQR, "sshkey-qr", false, "Print the encrypted OpenSSH private key and display it as a terminal QR code")
 	rootCmd.PersistentFlags().BoolVar(&zentenprofile, "zentenprofile", false, "Output public keys and addresses as DNS JSON to stdout")
-	rootCmd.PersistentFlags().StringVar(&publishRelays, "publish", "", "When used with --zentenprofile: publish NIP-78 Kind 30078 events to these relays (comma-separated, e.g. relay.primal.net,relay.damus.io)")
-	rootCmd.PersistentFlags().StringVar(&blockchains, "blockchains", "", "When used with --zentenprofile --publish: comma-separated NIP-78 labels to publish. Default: all labels")
+	rootCmd.PersistentFlags().StringVar(&publishRelays, "publish", "", "When used with --zentenprofile: publish/update Nostr Kind 0 metadata crypto address tags to these relays (comma-separated, e.g. relay.primal.net,relay.damus.io)")
+	rootCmd.PersistentFlags().StringVar(&blockchains, "blockchains", "", "When used with --zentenprofile --publish: comma-separated crypto labels to publish as Kind 0 tags. Default: all labels")
 	rootCmd.PersistentFlags().StringVar(&polyseedYear, "polyseed-year", "", "Override polyseed year (YYYY). Default: current year")
 	rootCmd.PersistentFlags().StringVar(&polyseedMonth, "polyseed-month", "", "Override polyseed month (1-12). Default: 1 (January)")
 	rootCmd.PersistentFlags().BoolVar(&polyseedAll, "all-polyseeds", false, "Generate every possible polyseed (Nov 2021 – current month), one per month with correct birthday")
@@ -2899,7 +2888,7 @@ func displayBeldexOutput(ed25519Key *ed25519.PrivateKey, seedPassphrase string) 
 	return nil
 }
 
-type nip78Entry struct {
+type zentenProfileEntry struct {
 	TagName string
 	Value   string
 }
@@ -2954,48 +2943,6 @@ func tagsToNostrTags(tags [][]string) nostrpkg.Tags {
 	return out
 }
 
-func allZentenProfileEntries(record dnsRecord) []nip78Entry {
-	entries := make([]nip78Entry, 0, 34) //nolint:mnd
-	addEntry := func(name, value string) {
-		if value != "" {
-			entries = append(entries, nip78Entry{TagName: name, Value: value})
-		}
-	}
-	addEntry("ssh-ed25519", record.SSHEd25519)
-	addEntry("ssh-rsa", record.SSHRSA)
-	addEntry("nostr", record.Nostr)
-	addEntry("npub", record.Npub)
-	addEntry("npubkey", record.NpubKey)
-	addEntry("pubkey", record.PubKey)
-	addEntry("hexpub", record.HexPub)
-	addEntry("hexpubkey", record.HexPubKey)
-	addEntry("bitcoin", record.Bitcoin)
-	addEntry("silentpayment", record.SilentPayment)
-	addEntry("paynym", record.PayNym)
-	addEntry("litecoin", record.Litecoin)
-	addEntry("dogecoin", record.Dogecoin)
-	addEntry("monero", record.Monero)
-	addEntry("cosmos", record.Cosmos)
-	addEntry("noble", record.Noble)
-	addEntry("arbitrum", record.Arbitrum)
-	addEntry("avalanche", record.Avalanche)
-	addEntry("base", record.Base)
-	addEntry("bnbchain", record.BNBChain)
-	addEntry("celo", record.Celo)
-	addEntry("cronos", record.Cronos)
-	addEntry("ethereum", record.Ethereum)
-	addEntry("hyperevm", record.HyperEVM)
-	addEntry("zcash", record.Zcash)
-	addEntry("optimism", record.Optimism)
-	addEntry("polygon", record.Polygon)
-	addEntry("solana", record.Solana)
-	addEntry("sui", record.Sui)
-	addEntry("tron", record.Tron)
-	addEntry("stellar", record.Stellar)
-	addEntry("ripple", record.Ripple)
-	return entries
-}
-
 func parseBlockchainLabels(labels string) map[string]struct{} {
 	if strings.TrimSpace(labels) == "" {
 		return nil
@@ -3012,27 +2959,11 @@ func parseBlockchainLabels(labels string) map[string]struct{} {
 	return selected
 }
 
-func zentenProfilePublishEntries(record dnsRecord, labels string) []nip78Entry {
-	allEntries := allZentenProfileEntries(record)
-	selected := parseBlockchainLabels(labels)
-	if selected == nil {
-		return allEntries
-	}
-
-	entries := make([]nip78Entry, 0, len(allEntries))
-	for _, entry := range allEntries {
-		if _, ok := selected[entry.TagName]; ok {
-			entries = append(entries, entry)
-		}
-	}
-	return entries
-}
-
-func zentenProfileCryptoEntries(record dnsRecord) []nip78Entry {
-	entries := make([]nip78Entry, 0, 24) //nolint:mnd
+func zentenProfileCryptoEntries(record dnsRecord) []zentenProfileEntry {
+	entries := make([]zentenProfileEntry, 0, 24) //nolint:mnd
 	addEntry := func(name, value string) {
 		if value != "" {
-			entries = append(entries, nip78Entry{TagName: name, Value: value})
+			entries = append(entries, zentenProfileEntry{TagName: name, Value: value})
 		}
 	}
 	addEntry("bitcoin", record.Bitcoin)
@@ -3095,14 +3026,14 @@ func managedKind0CryptoTagNames() map[string]struct{} {
 	return managed
 }
 
-func filteredKind0CryptoEntries(record dnsRecord, labels string) []nip78Entry {
+func filteredKind0CryptoEntries(record dnsRecord, labels string) []zentenProfileEntry {
 	entries := zentenProfileCryptoEntries(record)
 	selected := parseBlockchainLabels(labels)
 	if selected == nil {
 		return entries
 	}
 
-	filtered := make([]nip78Entry, 0, len(entries))
+	filtered := make([]zentenProfileEntry, 0, len(entries))
 	for _, entry := range entries {
 		if _, ok := selected[entry.TagName]; ok {
 			filtered = append(filtered, entry)
@@ -3383,20 +3314,6 @@ func zentenProfileMoneroSubaddress(polyseedMnemonic string) (string, uint32, err
 	return addr, index, nil
 }
 
-func buildZentenProfileEvent(nostrKeys *seedify.NostrKeys, tags [][]string, content string, createdAt nostrpkg.Timestamp) (*nostrpkg.Event, error) {
-	ev := &nostrpkg.Event{
-		PubKey:    nostrKeys.PubKeyHex,
-		CreatedAt: createdAt,
-		Kind:      kindNIP78,
-		Tags:      tagsToNostrTags(tags),
-		Content:   content,
-	}
-	if err := ev.Sign(nostrKeys.PrivKeyHex); err != nil {
-		return nil, fmt.Errorf("failed to sign NIP-78 Kind 30078 event: %w", err)
-	}
-	return ev, nil
-}
-
 func buildKind0CryptoTagsEvent(existing *nostrpkg.Event, record *dnsRecord, nostrKeys *seedify.NostrKeys, labels string, createdAt nostrpkg.Timestamp) (*nostrpkg.Event, error) {
 	content, contentErr := defaultKind0Content(nostrKeys)
 	if contentErr != nil {
@@ -3445,29 +3362,6 @@ func fetchLatestKind0Event(ctx context.Context, relay *nostrpkg.Relay, pubkey st
 		return nil, fmt.Errorf("failed to query latest Kind 0 metadata event: %w", err)
 	}
 	return latestKind0Event(events), nil
-}
-
-func buildZentenProfileEvents(record *dnsRecord, nostrKeys *seedify.NostrKeys, labels string) ([]*nostrpkg.Event, error) {
-	createdAt := nostrpkg.Now()
-	publishEntries := zentenProfilePublishEntries(*record, labels)
-	events := make([]*nostrpkg.Event, 0, len(publishEntries))
-
-	for _, entry := range publishEntries {
-		event, err := buildZentenProfileEvent(nostrKeys, [][]string{{"d", entry.TagName}, {"i", zentenProfileITag}}, entry.Value, createdAt)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, event)
-	}
-
-	return events, nil
-}
-
-func nip78EventLabel(ev *nostrpkg.Event) string {
-	if dTag := ev.Tags.Find("d"); len(dTag) > 1 {
-		return dTag[1]
-	}
-	return "identifier"
 }
 
 func isNostrRateLimitError(err error) bool {
@@ -3521,87 +3415,8 @@ func publishNostrEventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev
 	return fmt.Errorf("failed to publish %s to %s: %w", label, relayURL, lastErr)
 }
 
-func publishNIP78EventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, relayURL string) error {
-	label := fmt.Sprintf("NIP-78 Kind 30078 event %s", nip78EventLabel(ev))
-	return publishNostrEventWithBackoff(ctx, relay, ev, relayURL, label)
-}
-
 func publishKind0EventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, relayURL string) error {
 	return publishNostrEventWithBackoff(ctx, relay, ev, relayURL, "Kind 0 metadata event")
-}
-
-func handleNIP78PublishFailure(ctx context.Context, relayURL string, label string, err error, consecutiveRateLimitFailures int) (int, error) {
-	fmt.Fprintf(os.Stderr, "seedify: failed to publish NIP-78 Kind 30078 event %s to %s: %v\n", label, relayURL, err)
-	if !isNostrRateLimitError(err) {
-		return consecutiveRateLimitFailures, nil
-	}
-
-	consecutiveRateLimitFailures++
-	if consecutiveRateLimitFailures < nostrMaxConsecutiveRateLimitFailure {
-		return consecutiveRateLimitFailures, nil
-	}
-
-	fmt.Fprintf(os.Stderr, "seedify: relay %s is still rate-limiting after %d consecutive failures; cooling down for %s\n", relayURL, consecutiveRateLimitFailures, nostrPublishRateLimitCooldown)
-	if err := sleepWithContext(ctx, nostrPublishRateLimitCooldown); err != nil {
-		return consecutiveRateLimitFailures, err
-	}
-	return 0, nil
-}
-
-// publishZentenProfileToRelays publishes current ZentenProfile NIP-78 Kind 30078 events to the given relays.
-func publishZentenProfileToRelays(record *dnsRecord, nostrKeys *seedify.NostrKeys, relays []string, labels string) error {
-	events, err := buildZentenProfileEvents(record, nostrKeys, labels)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), nostrPublishTimeout)
-	defer cancel()
-
-	publishedAny := false
-	for _, url := range relays {
-		fmt.Fprintf(os.Stderr, "seedify: connecting to %s\n", url)
-		relay, err := nostrpkg.RelayConnect(ctx, url)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "seedify: failed to connect to %s: %v\n", url, err)
-			continue
-		}
-		fmt.Fprintf(os.Stderr, "seedify: publishing %d NIP-78 Kind 30078 events to %s\n", len(events), url)
-
-		publishedCount := 0
-		consecutiveRateLimitFailures := 0
-		for i, ev := range events {
-			label := nip78EventLabel(ev)
-			if i > 0 {
-				fmt.Fprintf(os.Stderr, "seedify: waiting %s before next NIP-78 Kind 30078 event for %s\n", nostrPublishDelay, url)
-				if err := sleepWithContext(ctx, nostrPublishDelay); err != nil {
-					return err
-				}
-			}
-
-			fmt.Fprintf(os.Stderr, "seedify: publishing NIP-78 Kind 30078 event %s (%d/%d) to %s\n", label, i+1, len(events), url)
-			if err := publishNIP78EventWithBackoff(ctx, relay, ev, url); err != nil {
-				consecutiveRateLimitFailures, err = handleNIP78PublishFailure(ctx, url, label, err, consecutiveRateLimitFailures)
-				if err != nil {
-					return err
-				}
-				continue
-			}
-			fmt.Fprintf(os.Stderr, "seedify: published NIP-78 Kind 30078 event %s (%d/%d) to %s\n", label, i+1, len(events), url)
-			consecutiveRateLimitFailures = 0
-			publishedCount++
-		}
-
-		if publishedCount > 0 {
-			publishedAny = true
-			fmt.Fprintf(os.Stderr, "seedify: published %d NIP-78 Kind 30078 events to %s\n", publishedCount, url)
-		}
-	}
-
-	if !publishedAny {
-		return errors.New("failed to publish any NIP-78 Kind 30078 events")
-	}
-	return nil
 }
 
 // publishKind0CryptoTagsToRelays fetches each relay's latest Kind 0 metadata event,

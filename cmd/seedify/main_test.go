@@ -268,69 +268,6 @@ expect {
 	return string(out), err
 }
 
-func TestZentenProfilePublishEntriesDefaultIncludesAllLabels(t *testing.T) {
-	t.Parallel()
-
-	record := dnsRecord{
-		SSHEd25519:    "ssh-pub",
-		Bitcoin:       "bc1example",
-		SilentPayment: "sp1example",
-		Litecoin:      "ltc1example",
-		Ethereum:      "0xeth",
-		HyperEVM:      "0xhype",
-	}
-
-	got := zentenProfilePublishEntries(record, "")
-	want := []nip78Entry{
-		{TagName: "ssh-ed25519", Value: "ssh-pub"},
-		{TagName: "bitcoin", Value: "bc1example"},
-		{TagName: "silentpayment", Value: "sp1example"},
-		{TagName: "litecoin", Value: "ltc1example"},
-		{TagName: "ethereum", Value: "0xeth"},
-		{TagName: "hyperevm", Value: "0xhype"},
-	}
-
-	if len(got) != len(want) {
-		t.Fatalf("zentenProfilePublishEntries returned %d entries, want %d: %#v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("zentenProfilePublishEntries[%d] = %#v, want %#v", i, got[i], want[i])
-		}
-	}
-}
-
-func TestZentenProfilePublishEntriesFiltersBlockchains(t *testing.T) {
-	t.Parallel()
-
-	record := dnsRecord{
-		SSHEd25519:    "ssh-pub",
-		Bitcoin:       "bc1example",
-		SilentPayment: "sp1example",
-		PayNym:        "PM8Texample",
-		Litecoin:      "ltc1example",
-		Monero:        "4example",
-		Ethereum:      "0xeth",
-		Solana:        "solexample",
-	}
-
-	got := zentenProfilePublishEntries(record, "silentpayment, ethereum,solana")
-	want := []nip78Entry{
-		{TagName: "silentpayment", Value: "sp1example"},
-		{TagName: "ethereum", Value: "0xeth"},
-		{TagName: "solana", Value: "solexample"},
-	}
-
-	if len(got) != len(want) {
-		t.Fatalf("zentenProfilePublishEntries returned %d entries, want %d: %#v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("zentenProfilePublishEntries[%d] = %#v, want %#v", i, got[i], want[i])
-		}
-	}
-}
-
 func TestKind0CryptoTagsFilterAdditions(t *testing.T) {
 	t.Parallel()
 
@@ -457,37 +394,6 @@ func TestNostrPublishBackoff(t *testing.T) {
 		if got := nostrPublishBackoff(tt.attempt); got != tt.want {
 			t.Fatalf("nostrPublishBackoff(%d) = %s, want %s", tt.attempt, got, tt.want)
 		}
-	}
-}
-
-func TestBuildZentenProfileEvents(t *testing.T) {
-	t.Parallel()
-
-	privKey := nostrpkg.GeneratePrivateKey()
-	pubKey, err := nostrpkg.GetPublicKey(privKey)
-	if err != nil {
-		t.Fatalf("get public key: %v", err)
-	}
-
-	nostrKeys := &seedify.NostrKeys{PubKeyHex: pubKey, PrivKeyHex: privKey}
-	record := &dnsRecord{Bitcoin: "bc1example", Ethereum: "0xexample"}
-	events, err := buildZentenProfileEvents(record, nostrKeys, "ethereum")
-	if err != nil {
-		t.Fatalf("buildZentenProfileEvents: %v", err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("buildZentenProfileEvents returned %d events, want 1", len(events))
-	}
-
-	ethereum := events[0]
-	if ethereum.Kind != kindNIP78 || ethereum.Content != "0xexample" {
-		t.Fatalf("ethereum event kind/content = %d/%q, want %d/0xexample", ethereum.Kind, ethereum.Content, kindNIP78)
-	}
-	if len(ethereum.Tags) != 2 || len(ethereum.Tags[0]) != 2 || len(ethereum.Tags[1]) != 2 {
-		t.Fatalf("ethereum tags = %#v", ethereum.Tags)
-	}
-	if ethereum.Tags[0][0] != "d" || ethereum.Tags[0][1] != "ethereum" || ethereum.Tags[1][0] != "i" || ethereum.Tags[1][1] != zentenProfileITag {
-		t.Fatalf("ethereum tags = %#v", ethereum.Tags)
 	}
 }
 
