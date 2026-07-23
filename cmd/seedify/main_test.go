@@ -377,6 +377,25 @@ func TestNostrRateLimitErrorDetection(t *testing.T) {
 	}
 }
 
+func TestNostrAuthRequiredErrorDetection(t *testing.T) {
+	t.Parallel()
+
+	authErrors := []error{
+		errors.New("msg: auth-required: please authenticate"),
+		errors.New("auth required: login first"),
+		errors.New("authentication required"),
+		errors.New("msg: restricted: authentication error"),
+	}
+	for _, err := range authErrors {
+		if !isNostrAuthRequiredError(err) {
+			t.Fatalf("expected auth-required message to be detected: %v", err)
+		}
+	}
+	if isNostrAuthRequiredError(errors.New("invalid: blocked")) {
+		t.Fatal("did not expect non-auth error to be detected")
+	}
+}
+
 func TestNostrPublishBackoff(t *testing.T) {
 	t.Parallel()
 

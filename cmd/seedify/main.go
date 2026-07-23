@@ -3364,12 +3364,47 @@ func fetchLatestKind0Event(ctx context.Context, relay *nostrpkg.Relay, pubkey st
 	return latestKind0Event(events), nil
 }
 
+func fetchLatestKind0EventWithAuth(ctx context.Context, relay *nostrpkg.Relay, pubkey string, nostrKeys *seedify.NostrKeys, relayURL string) (*nostrpkg.Event, error) {
+	existing, err := fetchLatestKind0Event(ctx, relay, pubkey)
+	if err == nil || !isNostrAuthRequiredError(err) {
+		return existing, err
+	}
+
+	fmt.Fprintf(os.Stderr, "seedify: relay %s requires authentication before fetching Kind 0 metadata event: %v\n", relayURL, err)
+	if authErr := authenticateNostrRelay(ctx, relay, nostrKeys, relayURL); authErr != nil {
+		return nil, authErr
+	}
+	return fetchLatestKind0Event(ctx, relay, pubkey)
+}
+
 func isNostrRateLimitError(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "rate-limited") || strings.Contains(msg, "rate limited") || strings.Contains(msg, "too much")
+}
+
+func isNostrAuthRequiredError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "auth-required:") ||
+		strings.Contains(msg, "auth required") ||
+		strings.Contains(msg, "authentication required") ||
+		strings.Contains(msg, "restricted: authentication")
+}
+
+func authenticateNostrRelay(ctx context.Context, relay *nostrpkg.Relay, nostrKeys *seedify.NostrKeys, relayURL string) error {
+	fmt.Fprintf(os.Stderr, "seedify: authenticating to %s with NIP-42\n", relayURL)
+	if err := relay.Auth(ctx, func(event *nostrpkg.Event) error {
+		return event.Sign(nostrKeys.PrivKeyHex)
+	}); err != nil {
+		return fmt.Errorf("failed to authenticate to %s: %w", relayURL, err)
+	}
+	fmt.Fprintf(os.Stderr, "seedify: authenticated to %s with NIP-42\n", relayURL)
+	return nil
 }
 
 func nostrPublishBackoff(attempt int) time.Duration {
@@ -3415,8 +3450,25 @@ func publishNostrEventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev
 	return fmt.Errorf("failed to publish %s to %s: %w", label, relayURL, lastErr)
 }
 
+func publishNostrEventWithAuthAndBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, nostrKeys *seedify.NostrKeys, relayURL string, label string) error {
+	err := publishNostrEventWithBackoff(ctx, relay, ev, relayURL, label)
+	if err == nil || !isNostrAuthRequiredError(err) {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "seedify: relay %s requires authentication before publishing %s: %v\n", relayURL, label, err)
+	if authErr := authenticateNostrRelay(ctx, relay, nostrKeys, relayURL); authErr != nil {
+		return authErr
+	}
+	return publishNostrEventWithBackoff(ctx, relay, ev, relayURL, label)
+}
+
 func publishKind0EventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, relayURL string) error {
 	return publishNostrEventWithBackoff(ctx, relay, ev, relayURL, "Kind 0 metadata event")
+}
+
+func publishKind0EventWithAuthAndBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, nostrKeys *seedify.NostrKeys, relayURL string) error {
+	return publishNostrEventWithAuthAndBackoff(ctx, relay, ev, nostrKeys, relayURL, "Kind 0 metadata event")
 }
 
 // publishKind0CryptoTagsToRelays fetches each relay's latest Kind 0 metadata event,
@@ -3436,7 +3488,7 @@ func publishKind0CryptoTagsToRelays(record *dnsRecord, nostrKeys *seedify.NostrK
 		}
 
 		fmt.Fprintf(os.Stderr, "seedify: fetching current Kind 0 metadata event from %s\n", url)
-		existing, err := fetchLatestKind0Event(ctx, relay, nostrKeys.PubKeyHex)
+		existing, err := fetchLatestKind0EventWithAuth(ctx, relay, nostrKeys.PubKeyHex, nostrKeys, url)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "seedify: failed to fetch Kind 0 metadata event from %s: %v\n", url, err)
 			continue
@@ -3448,7 +3500,7 @@ func publishKind0CryptoTagsToRelays(record *dnsRecord, nostrKeys *seedify.NostrK
 		}
 
 		fmt.Fprintf(os.Stderr, "seedify: publishing Kind 0 metadata event with crypto address tags to %s\n", url)
-		if err := publishKind0EventWithBackoff(ctx, relay, ev, url); err != nil {
+		if err := publishKind0EventWithAuthAndBackoff(ctx, relay, ev, nostrKeys, url); err != nil {
 			fmt.Fprintf(os.Stderr, "seedify: failed to publish Kind 0 metadata event to %s: %v\n", url, err)
 			continue
 		}
