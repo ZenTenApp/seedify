@@ -332,6 +332,37 @@ func TestBuildKind0CryptoTagsEventReplacesAllManagedTags(t *testing.T) {
 	}
 }
 
+func TestBuildKind10002RelayListEvent(t *testing.T) {
+	t.Parallel()
+
+	privKey := nostrpkg.GeneratePrivateKey()
+	pubKey, err := nostrpkg.GetPublicKey(privKey)
+	if err != nil {
+		t.Fatalf("get public key: %v", err)
+	}
+
+	nostrKeys := &seedify.NostrKeys{PubKeyHex: pubKey, PrivKeyHex: privKey}
+	ev, err := buildKind10002RelayListEvent([]string{"wss://dm1.zentext.me", "wss://dm2.nostr.box"}, nostrKeys, nostrpkg.Timestamp(123))
+	if err != nil {
+		t.Fatalf("buildKind10002RelayListEvent: %v", err)
+	}
+	if ev.Kind != kindNostrRelayListMetadata || ev.Content != "" || ev.PubKey != pubKey {
+		t.Fatalf("kind/content/pubkey = %d/%q/%q, want %d/empty/%q", ev.Kind, ev.Content, ev.PubKey, kindNostrRelayListMetadata, pubKey)
+	}
+	wantTags := nostrpkg.Tags{{"r", "wss://dm1.zentext.me"}, {"r", "wss://dm2.nostr.box"}}
+	if len(ev.Tags) != len(wantTags) {
+		t.Fatalf("Kind 10002 tags = %#v, want %#v", ev.Tags, wantTags)
+	}
+	for i := range wantTags {
+		if len(ev.Tags[i]) != len(wantTags[i]) || ev.Tags[i][0] != wantTags[i][0] || ev.Tags[i][1] != wantTags[i][1] {
+			t.Fatalf("Kind 10002 tag %d = %#v, want %#v", i, ev.Tags[i], wantTags[i])
+		}
+	}
+	if ok, sigErr := ev.CheckSignature(); !ok || sigErr != nil {
+		t.Fatalf("Kind 10002 event signature valid = %v, err = %v", ok, sigErr)
+	}
+}
+
 func TestBuildKind0CryptoTagsEventWithoutExistingUsesGeneratedContent(t *testing.T) {
 	t.Parallel()
 
