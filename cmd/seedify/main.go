@@ -54,7 +54,8 @@ const (
 	polyseedBirthdayEpochUnix = uint64(1635768000)
 	polyseedBirthdayTimeStep  = uint64(2629746)
 
-	kindNostrProfileMetadata = 0
+	kindNostrProfileMetadata   = 0
+	kindNostrRelayListMetadata = 10002
 
 	zentenProfileMoneroDailySubaddressMax = 9
 	defaultXMRAddressCount                = 9
@@ -104,6 +105,7 @@ var (
 	beldex                   bool
 	sshKeyQR                 bool
 	zentenprofile            bool
+	kind10002Relays          string
 	publishRelays            string
 	blockchains              string
 	polyseedYear             string
@@ -170,6 +172,7 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
   seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025
   seedify ~/.ssh/id_ed25519 --xmr --xmr-seed-offset "my-offset" --polyseed-year 2025
   seedify ~/.ssh/id_ed25519 --xmr --polyseed-year 2025 --polyseed-month 3
+  seedify ~/.ssh/id_ed25519 --kind10002 dm1.zentext.me,dm2.nostr.box --publish relay.damus.io,relay.primal.net,purplepag.es
   cat ~/.ssh/id_ed25519 | seedify --words 18
   seedify ~/.ssh/id_ed25519 --to-rsa --output ~/.ssh/id_rsa_derived
   seedify ~/.ssh/id_ed25519 --to-rsa --reuse-passphrase --output ~/.ssh/id_rsa_derived
@@ -309,9 +312,15 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 				return errors.New("--xmr-seed-offset requires --xmr, --xmr-legacy, or --full")
 			}
 
-			// --publish requires --zentenprofile
-			if publishRelays != "" && !zentenprofile {
-				return errors.New("--publish requires --zentenprofile")
+			// --publish publishes ZentenProfile Kind 0 tags or standalone Kind 10002 relay list metadata.
+			if publishRelays != "" && !zentenprofile && kind10002Relays == "" {
+				return errors.New("--publish requires --zentenprofile or --kind10002")
+			}
+			if kind10002Relays != "" && publishRelays == "" {
+				return errors.New("--kind10002 requires --publish")
+			}
+			if kind10002Relays != "" && zentenprofile {
+				return errors.New("--kind10002 and --zentenprofile are mutually exclusive")
 			}
 
 			// Handle --sshkey-qr: print only the encrypted OpenSSH private key and its QR code.
@@ -339,6 +348,11 @@ with a space. Check your HISTCONTROL or HIST_IGNORE_SPACE settings.`,
 
 				fmt.Println(mnemonic)
 				return nil
+			}
+
+			// Handle --kind10002 flag: publish a Nostr relay list metadata event.
+			if kind10002Relays != "" {
+				return publishKind10002RelayListFromKey(keyPath, seedPassphrase, kind10002Relays, publishRelays)
 			}
 
 			// Handle --zentenprofile flag: output public keys and addresses as DNS JSON.
@@ -612,7 +626,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&beldex, "bdx", false, "Derive Beldex (BDX) address from 25-word legacy seed (same seed format as --xmr-legacy)")
 	rootCmd.PersistentFlags().BoolVar(&sshKeyQR, "sshkey-qr", false, "Print the encrypted OpenSSH private key and display it as a terminal QR code")
 	rootCmd.PersistentFlags().BoolVar(&zentenprofile, "zentenprofile", false, "Output public keys and addresses as DNS JSON to stdout")
-	rootCmd.PersistentFlags().StringVar(&publishRelays, "publish", "", "When used with --zentenprofile: publish/update Nostr Kind 0 metadata crypto address tags to these relays (comma-separated, e.g. relay.primal.net,relay.damus.io)")
+	rootCmd.PersistentFlags().StringVar(&kind10002Relays, "kind10002", "", "Publish a Nostr Kind 10002 relay list metadata event with these relay URLs as r tags (comma-separated; use with --publish)")
+	rootCmd.PersistentFlags().StringVar(&publishRelays, "publish", "", "Publish Nostr metadata to these relays (comma-separated, e.g. relay.primal.net,relay.damus.io); with --zentenprofile publishes Kind 0 crypto address tags, with --kind10002 publishes Kind 10002 relay list metadata")
 	rootCmd.PersistentFlags().StringVar(&blockchains, "blockchains", "", "When used with --zentenprofile --publish: comma-separated crypto labels to publish as Kind 0 tags. Default: all labels")
 	rootCmd.PersistentFlags().StringVar(&polyseedYear, "polyseed-year", "", "Override polyseed year (YYYY). Default: current year")
 	rootCmd.PersistentFlags().StringVar(&polyseedMonth, "polyseed-month", "", "Override polyseed month (1-12). Default: 1 (January)")
@@ -3110,11 +3125,7 @@ func parseRelayURLs(relaysStr string) []string {
 	return out
 }
 
-// generateDNSRecord parses the key, derives addresses, and returns the dnsRecord and Nostr keys.
-//
-//nolint:funlen
-func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seedify.NostrKeys, error) {
-	// Parse the key (same pattern as generateUnifiedOutput)
+func deriveZentenProfileNostrKeys(keyPath string, seedPassphrase string) (*seedify.NostrKeys, *ed25519.PrivateKey, error) {
 	f, err := openFileOrStdin(keyPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not read key: %w", err)
@@ -3155,7 +3166,27 @@ func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seed
 	if err != nil {
 		return nil, nil, err
 	}
-	seedPassphrase = ""
+
+	mnemonic, err := seedify.ToMnemonicWithLength(ed25519Key, 24, "", false, 0) //nolint:mnd
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not generate 24-word mnemonic: %w", err)
+	}
+
+	nostrKeys, err := seedify.DeriveNostrKeysWithHex(mnemonic, bip39Passphrase)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to derive Nostr keys: %w", err)
+	}
+	return nostrKeys, ed25519Key, nil
+}
+
+// generateDNSRecord parses the key, derives addresses, and returns the dnsRecord and Nostr keys.
+//
+//nolint:funlen
+func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seedify.NostrKeys, error) {
+	nostrKeys, ed25519Key, err := deriveZentenProfileNostrKeys(keyPath, seedPassphrase)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Encode SSH public key for the DNS record.
 	sshPubKey, pubErr := ssh.NewPublicKey(ed25519Key.Public())
@@ -3164,14 +3195,9 @@ func generateDNSRecord(keyPath string, seedPassphrase string) (*dnsRecord, *seed
 	}
 	sshEd25519PubKey := base64.StdEncoding.EncodeToString(sshPubKey.Marshal())
 
-	mnemonic, err := seedify.ToMnemonicWithLength(ed25519Key, 24, seedPassphrase, false, 0) //nolint:mnd
+	mnemonic, err := seedify.ToMnemonicWithLength(ed25519Key, 24, "", false, 0) //nolint:mnd
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not generate 24-word mnemonic: %w", err)
-	}
-
-	nostrKeys, err := seedify.DeriveNostrKeysWithHex(mnemonic, bip39Passphrase)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to derive Nostr keys: %w", err)
 	}
 
 	zentenProfileDate := time.Now().UTC()
@@ -3314,6 +3340,28 @@ func zentenProfileMoneroSubaddress(polyseedMnemonic string) (string, uint32, err
 	return addr, index, nil
 }
 
+func buildKind10002RelayListEvent(relays []string, nostrKeys *seedify.NostrKeys, createdAt nostrpkg.Timestamp) (*nostrpkg.Event, error) {
+	if len(relays) == 0 {
+		return nil, errors.New("kind 10002 relay list requires at least one relay")
+	}
+	tags := make(nostrpkg.Tags, 0, len(relays))
+	for _, relay := range relays {
+		tags = append(tags, nostrpkg.Tag{"r", relay})
+	}
+
+	ev := &nostrpkg.Event{
+		PubKey:    nostrKeys.PubKeyHex,
+		CreatedAt: createdAt,
+		Kind:      kindNostrRelayListMetadata,
+		Tags:      tags,
+		Content:   "",
+	}
+	if err := ev.Sign(nostrKeys.PrivKeyHex); err != nil {
+		return nil, fmt.Errorf("failed to sign Kind 10002 relay list metadata event: %w", err)
+	}
+	return ev, nil
+}
+
 func buildKind0CryptoTagsEvent(existing *nostrpkg.Event, record *dnsRecord, nostrKeys *seedify.NostrKeys, labels string, createdAt nostrpkg.Timestamp) (*nostrpkg.Event, error) {
 	content, contentErr := defaultKind0Content(nostrKeys)
 	if contentErr != nil {
@@ -3364,12 +3412,47 @@ func fetchLatestKind0Event(ctx context.Context, relay *nostrpkg.Relay, pubkey st
 	return latestKind0Event(events), nil
 }
 
+func fetchLatestKind0EventWithAuth(ctx context.Context, relay *nostrpkg.Relay, pubkey string, nostrKeys *seedify.NostrKeys, relayURL string) (*nostrpkg.Event, error) {
+	existing, err := fetchLatestKind0Event(ctx, relay, pubkey)
+	if err == nil || !isNostrAuthRequiredError(err) {
+		return existing, err
+	}
+
+	fmt.Fprintf(os.Stderr, "seedify: relay %s requires authentication before fetching Kind 0 metadata event: %v\n", relayURL, err)
+	if authErr := authenticateNostrRelay(ctx, relay, nostrKeys, relayURL); authErr != nil {
+		return nil, authErr
+	}
+	return fetchLatestKind0Event(ctx, relay, pubkey)
+}
+
 func isNostrRateLimitError(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "rate-limited") || strings.Contains(msg, "rate limited") || strings.Contains(msg, "too much")
+}
+
+func isNostrAuthRequiredError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "auth-required:") ||
+		strings.Contains(msg, "auth required") ||
+		strings.Contains(msg, "authentication required") ||
+		strings.Contains(msg, "restricted: authentication")
+}
+
+func authenticateNostrRelay(ctx context.Context, relay *nostrpkg.Relay, nostrKeys *seedify.NostrKeys, relayURL string) error {
+	fmt.Fprintf(os.Stderr, "seedify: authenticating to %s with NIP-42\n", relayURL)
+	if err := relay.Auth(ctx, func(event *nostrpkg.Event) error {
+		return event.Sign(nostrKeys.PrivKeyHex)
+	}); err != nil {
+		return fmt.Errorf("failed to authenticate to %s: %w", relayURL, err)
+	}
+	fmt.Fprintf(os.Stderr, "seedify: authenticated to %s with NIP-42\n", relayURL)
+	return nil
 }
 
 func nostrPublishBackoff(attempt int) time.Duration {
@@ -3415,8 +3498,73 @@ func publishNostrEventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev
 	return fmt.Errorf("failed to publish %s to %s: %w", label, relayURL, lastErr)
 }
 
-func publishKind0EventWithBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, relayURL string) error {
-	return publishNostrEventWithBackoff(ctx, relay, ev, relayURL, "Kind 0 metadata event")
+func publishNostrEventWithAuthAndBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, nostrKeys *seedify.NostrKeys, relayURL string, label string) error {
+	err := publishNostrEventWithBackoff(ctx, relay, ev, relayURL, label)
+	if err == nil || !isNostrAuthRequiredError(err) {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "seedify: relay %s requires authentication before publishing %s: %v\n", relayURL, label, err)
+	if authErr := authenticateNostrRelay(ctx, relay, nostrKeys, relayURL); authErr != nil {
+		return authErr
+	}
+	return publishNostrEventWithBackoff(ctx, relay, ev, relayURL, label)
+}
+
+func publishKind0EventWithAuthAndBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, nostrKeys *seedify.NostrKeys, relayURL string) error {
+	return publishNostrEventWithAuthAndBackoff(ctx, relay, ev, nostrKeys, relayURL, "Kind 0 metadata event")
+}
+
+func publishKind10002RelayListWithAuthAndBackoff(ctx context.Context, relay *nostrpkg.Relay, ev *nostrpkg.Event, nostrKeys *seedify.NostrKeys, relayURL string) error {
+	return publishNostrEventWithAuthAndBackoff(ctx, relay, ev, nostrKeys, relayURL, "Kind 10002 relay list metadata event")
+}
+
+func publishKind10002RelayListFromKey(keyPath string, seedPassphrase string, relayList string, publishRelays string) error {
+	nostrKeys, _, err := deriveZentenProfileNostrKeys(keyPath, seedPassphrase)
+	if err != nil {
+		return err
+	}
+	relayListRelays := parseRelayURLs(relayList)
+	if len(relayListRelays) == 0 {
+		return errors.New("--kind10002 requires at least one relay")
+	}
+	publishRelayURLs := parseRelayURLs(publishRelays)
+	if len(publishRelayURLs) == 0 {
+		return errors.New("--publish requires at least one relay")
+	}
+	ev, err := buildKind10002RelayListEvent(relayListRelays, nostrKeys, nostrpkg.Now())
+	if err != nil {
+		return err
+	}
+	return publishKind10002RelayListToRelays(ev, nostrKeys, publishRelayURLs)
+}
+
+func publishKind10002RelayListToRelays(ev *nostrpkg.Event, nostrKeys *seedify.NostrKeys, relays []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), nostrPublishTimeout)
+	defer cancel()
+
+	publishedAny := false
+	for _, url := range relays {
+		fmt.Fprintf(os.Stderr, "seedify: connecting to %s for Kind 10002 relay list metadata update\n", url)
+		relay, err := nostrpkg.RelayConnect(ctx, url)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "seedify: failed to connect to %s for Kind 10002 relay list metadata update: %v\n", url, err)
+			continue
+		}
+
+		fmt.Fprintf(os.Stderr, "seedify: publishing Kind 10002 relay list metadata event to %s\n", url)
+		if err := publishKind10002RelayListWithAuthAndBackoff(ctx, relay, ev, nostrKeys, url); err != nil {
+			fmt.Fprintf(os.Stderr, "seedify: failed to publish Kind 10002 relay list metadata event to %s: %v\n", url, err)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "seedify: published Kind 10002 relay list metadata event to %s\n", url)
+		publishedAny = true
+	}
+
+	if !publishedAny {
+		return errors.New("failed to publish Kind 10002 relay list metadata event to any relay")
+	}
+	return nil
 }
 
 // publishKind0CryptoTagsToRelays fetches each relay's latest Kind 0 metadata event,
@@ -3436,7 +3584,7 @@ func publishKind0CryptoTagsToRelays(record *dnsRecord, nostrKeys *seedify.NostrK
 		}
 
 		fmt.Fprintf(os.Stderr, "seedify: fetching current Kind 0 metadata event from %s\n", url)
-		existing, err := fetchLatestKind0Event(ctx, relay, nostrKeys.PubKeyHex)
+		existing, err := fetchLatestKind0EventWithAuth(ctx, relay, nostrKeys.PubKeyHex, nostrKeys, url)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "seedify: failed to fetch Kind 0 metadata event from %s: %v\n", url, err)
 			continue
@@ -3448,7 +3596,7 @@ func publishKind0CryptoTagsToRelays(record *dnsRecord, nostrKeys *seedify.NostrK
 		}
 
 		fmt.Fprintf(os.Stderr, "seedify: publishing Kind 0 metadata event with crypto address tags to %s\n", url)
-		if err := publishKind0EventWithBackoff(ctx, relay, ev, url); err != nil {
+		if err := publishKind0EventWithAuthAndBackoff(ctx, relay, ev, nostrKeys, url); err != nil {
 			fmt.Fprintf(os.Stderr, "seedify: failed to publish Kind 0 metadata event to %s: %v\n", url, err)
 			continue
 		}

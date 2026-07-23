@@ -362,7 +362,7 @@ BIP39 seed phrase lengths.
 and **`--words`**: emit *only* the requested output — no SSH key material, no Tor/I2P
 address. Use these when you only need a specific seed phrase or address.
 
-**Exclusive flags** (`--brave`, `--zentenprofile`, `--to-rsa`, `--to-dkim`, `--to-dnssec`,
+**Exclusive flags** (`--brave`, `--zentenprofile`, `--kind10002`, `--to-rsa`, `--to-dkim`, `--to-dnssec`,
 `--to-jks`, `--to-onion`, `--to-i2p`, `--to-pgp`): each produces a single focused output and bypasses
 seed phrase generation entirely.
 
@@ -387,9 +387,10 @@ seed phrase generation entirely.
 | `--xmr-seed-offset` | Feather-compatible Monero seed offset passphrase for Monero address derivation |
 | `--sshkey-qr` | Print only the encrypted OpenSSH private key as one raw base64 line, followed by a terminal QR code containing that same raw line |
 | `--zentenprofile` | Output public keys and addresses as DNS JSON |
+| `--kind10002` | Publish a Nostr Kind 10002 relay list metadata event with comma-separated relay `r` tags; requires `--publish` |
 | `--to-dnssec` | Derive a DNSSEC RSASHA256 keypair; use with `--dnssec-domain`, `--dnssec-ksk`/`--dnssec-zsk`, and optional `--output <dir>` |
 | `--to-jks` | Derive an RSA keypair and self-signed X.509 certificate as a Java KeyStore; use with `--jks-alias`, `--output`, and optional `--bits`, `--jks-validity`, `--jks-dn` |
-| `--publish` | Publish/update Nostr Kind 0 metadata crypto address tags to relays (with `--zentenprofile`) |
+| `--publish` | Publish Nostr metadata to comma-separated relays; with `--zentenprofile`, publishes/updates Kind 0 crypto address tags; with `--kind10002`, publishes Kind 10002 relay list metadata |
 | `--blockchains` | Comma-separated crypto labels to publish as Kind 0 tags with `--zentenprofile --publish`; default is all labels |
 | `--polyseed-year` | Override Polyseed birthday year (default: current year) |
 | `--polyseed-month` | Override Polyseed birthday month, 1–12 (default: January) |
